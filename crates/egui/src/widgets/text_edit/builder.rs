@@ -616,6 +616,18 @@ impl TextEdit<'_> {
             ui.ctx().set_cursor_icon(CursorIcon::Text);
         }
 
+        // Update the InputState if we're interacting (E.g. updating seleciton or cursor position)
+        if interactive
+            && state.soft_keyboard_visible
+            && (response.drag_stopped() || response.clicked())
+        {
+            update_text_input(
+                ui.ctx(),
+                state.cursor.range(&galley),
+                text.as_str().to_owned(),
+            );
+        }
+
         let mut cursor_range = None;
         let prev_cursor_range = state.cursor.range(&galley);
         if interactive && ui.memory(|mem| mem.has_focus(id)) {
@@ -691,6 +703,10 @@ impl TextEdit<'_> {
             false
         };
 
+        if ui.memory(|memory| memory.lost_focus(id)) {
+            state.soft_keyboard_visible = false;
+        }
+
         if ui.is_rect_visible(rect) {
             if text.as_str().is_empty() && !hint_text.is_empty() {
                 let hint_text_color = ui.visuals().weak_text_color();
@@ -750,6 +766,16 @@ impl TextEdit<'_> {
                     }
 
                     if text.is_mutable() && interactive {
+                        // Send the text input only when the keyboard is initially shown.
+                        if !state.soft_keyboard_visible {
+                            update_text_input(
+                                ui.ctx(),
+                                state.cursor.range(&galley),
+                                text.as_str().to_owned(),
+                            );
+                            state.soft_keyboard_visible = true;
+                        }
+
                         let now = ui.ctx().input(|i| i.time);
                         if response.changed() || selection_changed {
                             state.last_interaction_time = now;
@@ -869,6 +895,31 @@ fn mask_if_password(is_password: bool, text: &str) -> String {
     } else {
         text.to_owned()
     }
+}
+
+/// Update the soft keyboard TextInputState
+fn update_text_input(ctx: &Context, cursor_range: Option<CursorRange>, text: String) {
+    ctx.output_mut(|o| {
+        let selection = if let Some(cursor_range) = cursor_range {
+            TextSpan {
+                start: cursor_range.primary.ccursor.index,
+                end: cursor_range.secondary.ccursor.index,
+            }
+        } else {
+            TextSpan {
+                start: 0,
+                end: 0,
+            }
+        };
+
+        let output = TextInputState {
+            text: text.as_str().to_owned(),
+            selection,
+            compose_region: None,
+        };
+
+        o.text_input_state = Some(output)
+    });
 }
 
 // ----------------------------------------------------------------------------
