@@ -707,7 +707,11 @@ impl TextEdit<'_> {
             state.soft_keyboard_visible = false;
         }
 
-        if ui.is_rect_visible(rect) {
+        if ui.memory(|mem| mem.has_focus(id)) && ui.input(|i| i.screen_rect_changed()) {
+            ui.scroll_to_rect(rect, None);
+        }
+
+        if ui.is_rect_visible(rect) || ui.memory(|mem| mem.has_focus(id)) {
             if text.as_str().is_empty() && !hint_text.is_empty() {
                 let hint_text_color = ui.visuals().weak_text_color();
                 let hint_text_font_id = hint_text_font.unwrap_or(font_id.into());
@@ -901,18 +905,15 @@ fn mask_if_password(is_password: bool, text: &str) -> String {
 fn update_text_input(ctx: &Context, cursor_range: Option<CursorRange>, text: String) {
     ctx.output_mut(|o| {
         let selection = if let Some(cursor_range) = cursor_range {
-            TextSpan {
+            crate::TextSpan {
                 start: cursor_range.primary.ccursor.index,
                 end: cursor_range.secondary.ccursor.index,
             }
         } else {
-            TextSpan {
-                start: 0,
-                end: 0,
-            }
+            crate::TextSpan { start: 0, end: 0 }
         };
 
-        let output = TextInputState {
+        let output = crate::TextInputState {
             text: text.as_str().to_owned(),
             selection,
             compose_region: None,
