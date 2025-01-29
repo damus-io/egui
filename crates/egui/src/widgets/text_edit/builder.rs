@@ -619,6 +619,15 @@ impl TextEdit<'_> {
             ui.ctx().set_cursor_icon(CursorIcon::Text);
         }
 
+        // Update the InputState if we're interacting (E.g. updating seleciton or cursor position)
+        if interactive && state.ime_enabled && (response.drag_stopped() || response.clicked()) {
+            update_text_input(
+                ui.ctx(),
+                state.cursor.range(&galley),
+                text.as_str().to_owned(),
+            );
+        }
+
         let mut cursor_range = None;
         let prev_cursor_range = state.cursor.range(&galley);
         if interactive && ui.memory(|mem| mem.has_focus(id)) {
@@ -694,7 +703,11 @@ impl TextEdit<'_> {
             false
         };
 
-        if ui.is_rect_visible(rect) {
+        if ui.memory(|mem| mem.has_focus(id)) && ui.input(|i| i.screen_rect_changed()) {
+            ui.scroll_to_rect(rect, None);
+        }
+
+        if ui.is_rect_visible(rect) || ui.memory(|mem| mem.has_focus(id)) {
             if text.as_str().is_empty() && !hint_text.is_empty() {
                 let hint_text_color = ui.visuals().weak_text_color();
                 let hint_text_font_id = hint_text_font.unwrap_or(font_id.into());
@@ -756,6 +769,16 @@ impl TextEdit<'_> {
                     }
 
                     if text.is_mutable() && interactive {
+                        // Send the text input only when the keyboard is initially shown.
+                        if !state.ime_enabled {
+                            update_text_input(
+                                ui.ctx(),
+                                state.cursor.range(&galley),
+                                text.as_str().to_owned(),
+                            );
+                            state.ime_enabled = true
+                        }
+
                         let now = ui.ctx().input(|i| i.time);
                         if response.changed() || selection_changed {
                             state.last_interaction_time = now;
@@ -875,6 +898,38 @@ fn mask_if_password(is_password: bool, text: &str) -> String {
     } else {
         text.to_owned()
     }
+}
+
+/// Update the soft keyboard TextInputState
+fn update_text_input(ctx: &Context, cursor_range: Option<CursorRange>, text: String) {
+    ctx.output_mut(|o| {
+        let selection = if let Some(cursor_range) = cursor_range {
+            crate::TextSpan {
+                start: cursor_range.secondary.ccursor.index,
+                end: cursor_range.primary.ccursor.index,
+            }
+        } else {
+            crate::TextSpan { start: 0, end: 0 }
+        };
+
+        // if we have some selected range, use that as the compose
+        // region. The compose region is what the IME keyboard is
+        // use for suggestions, etc.
+        let compose_region = if selection.end == selection.start {
+            None
+        } else {
+            Some(selection)
+        };
+
+        log::debug!("update egui->android TextInputState {selection:?}");
+        let output = crate::TextInputState {
+            text: text.as_str().to_owned(),
+            selection,
+            compose_region,
+        };
+
+        o.text_input_state = Some(output)
+    });
 }
 
 // ----------------------------------------------------------------------------
@@ -1093,6 +1148,26 @@ fn events(
                     None
                 }
             },
+
+            Event::TextInputState(state) => {
+                log::debug!("replacing text edit via TextInputState {state:?}");
+
+                if &state.text != text.as_str() {
+                    text.replace_with(&state.text);
+
+                    if state.selection.start == state.selection.end {
+                        Some(CCursorRange::one(CCursor::new(state.selection.start)))
+                    } else {
+                        Some(CCursorRange::two(
+                            CCursor::new(state.selection.start),
+                            CCursor::new(state.selection.end),
+                        ))
+                    }
+                } else {
+                    // didn't mutate text
+                    None
+                }
+            }
 
             _ => None,
         };

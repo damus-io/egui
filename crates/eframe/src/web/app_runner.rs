@@ -320,7 +320,8 @@ impl AppRunner {
             mutable_text_under_cursor: _, // TODO(#4569): https://github.com/emilk/egui/issues/4569
             ime,
             #[cfg(feature = "accesskit")]
-                accesskit_update: _, // not currently implemented
+            accesskit_update: _, // not currently implemented
+            text_input_state: _, // not currently implemented
             num_completed_passes: _,    // handled by `Context::run`
             request_discard_reasons: _, // handled by `Context::run`
         } = platform_output;

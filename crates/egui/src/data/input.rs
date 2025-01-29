@@ -474,6 +474,9 @@ pub enum Event {
     /// IME Event
     Ime(ImeEvent),
 
+    /// Mobile soft keyboard input event
+    TextInputState(TextInputState),
+
     /// On touch screens, report this *in addition to*
     /// [`Self::PointerMoved`], [`Self::PointerButton`], [`Self::PointerGone`]
     Touch {
@@ -1133,6 +1136,30 @@ pub struct TouchDeviceId(pub u64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct TouchId(pub u64);
+
+/// This struct holds a span within a region of text from `start` (inclusive) to
+/// `end` (exclusive).
+///
+/// An empty span or cursor position is specified with `start == end`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TextSpan {
+    /// The start of the span (inclusive)
+    pub start: usize,
+
+    /// The end of the span (exclusive)
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TextInputState {
+    pub text: String,
+    /// A selection defined on the text.
+    pub selection: TextSpan,
+    /// A composing region defined on the text.
+    pub compose_region: Option<TextSpan>,
+}
 
 /// In what phase a touch event is in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

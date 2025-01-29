@@ -1,6 +1,6 @@
 //! All the data egui returns to the backend at the end of each frame.
 
-use crate::{RepaintCause, ViewportIdMap, ViewportOutput, WidgetType};
+use crate::{RepaintCause, TextInputState, ViewportIdMap, ViewportOutput, WidgetType};
 
 /// What egui emits each frame from [`crate::Context::run`].
 ///
@@ -162,6 +162,9 @@ pub struct PlatformOutput {
     /// If empty, there was never any calls.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub request_discard_reasons: Vec<RepaintCause>,
+
+    /// The soft keyboard text input state on mobile
+    pub text_input_state: Option<TextInputState>,
 }
 
 impl PlatformOutput {
@@ -199,6 +202,7 @@ impl PlatformOutput {
             accesskit_update,
             num_completed_passes,
             mut request_discard_reasons,
+            text_input_state,
         } = newer;
 
         self.commands.append(&mut commands);
@@ -215,6 +219,10 @@ impl PlatformOutput {
         self.num_completed_passes += num_completed_passes;
         self.request_discard_reasons
             .append(&mut request_discard_reasons);
+
+        if text_input_state.is_some() {
+            self.text_input_state = text_input_state;
+        }
 
         #[cfg(feature = "accesskit")]
         {
