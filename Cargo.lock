@@ -109,7 +109,7 @@ dependencies = [
  "accesskit_unix",
  "accesskit_windows",
  "raw-window-handle 0.6.2",
- "winit",
+ "winit 0.30.7",
 ]
 
 [[package]]
@@ -1196,6 +1196,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f25c0e292a7ca6d6498557ff1df68f32c99850012b6ea401cf8daf771f22ff53"
 
 [[package]]
+name = "dpi"
+version = "0.1.1"
+source = "git+https://github.com/jb55/winit?rev=a5e342540e02a93aca30a4a24e5c68b1313a3ca5#a5e342540e02a93aca30a4a24e5c68b1313a3ca5"
+
+[[package]]
 name = "ecolor"
 version = "0.30.0"
 dependencies = [
@@ -1244,7 +1249,7 @@ dependencies = [
  "wgpu",
  "winapi",
  "windows-sys 0.59.0",
- "winit",
+ "winit 0.30.8",
 ]
 
 [[package]]
@@ -1280,7 +1285,7 @@ dependencies = [
  "type-map",
  "web-time",
  "wgpu",
- "winit",
+ "winit 0.30.8",
 ]
 
 [[package]]
@@ -1301,7 +1306,7 @@ dependencies = [
  "wayland-cursor",
  "web-time",
  "webbrowser",
- "winit",
+ "winit 0.30.8",
 ]
 
 [[package]]
@@ -1381,7 +1386,7 @@ dependencies = [
  "profiling",
  "wasm-bindgen",
  "web-sys",
- "winit",
+ "winit 0.30.8",
 ]
 
 [[package]]
@@ -1857,7 +1862,7 @@ dependencies = [
  "cfg_aliases",
  "glutin",
  "raw-window-handle 0.6.2",
- "winit",
+ "winit 0.30.7",
 ]
 
 [[package]]
@@ -1974,7 +1979,7 @@ dependencies = [
  "eframe",
  "egui_extras",
  "log",
- "winit",
+ "winit 0.30.8",
 ]
 
 [[package]]
@@ -1992,7 +1997,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "env_logger",
- "winit",
+ "winit 0.30.8",
 ]
 
 [[package]]
@@ -4969,7 +4974,57 @@ dependencies = [
  "core-foundation",
  "core-graphics",
  "cursor-icon",
- "dpi",
+ "dpi 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "js-sys",
+ "libc",
+ "memmap2",
+ "ndk",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-ui-kit",
+ "orbclient",
+ "percent-encoding",
+ "pin-project",
+ "raw-window-handle 0.6.2",
+ "redox_syscall 0.4.1",
+ "rustix",
+ "smithay-client-toolkit",
+ "smol_str",
+ "tracing",
+ "unicode-segmentation",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-plasma",
+ "web-sys",
+ "web-time",
+ "windows-sys 0.52.0",
+ "x11-dl",
+ "x11rb",
+ "xkbcommon-dl",
+]
+
+[[package]]
+name = "winit"
+version = "0.30.8"
+source = "git+https://github.com/jb55/winit?rev=a5e342540e02a93aca30a4a24e5c68b1313a3ca5#a5e342540e02a93aca30a4a24e5c68b1313a3ca5"
+dependencies = [
+ "ahash",
+ "android-activity",
+ "atomic-waker",
+ "bitflags 2.8.0",
+ "block2",
+ "bytemuck",
+ "calloop",
+ "cfg_aliases",
+ "concurrent-queue",
+ "core-foundation",
+ "core-graphics",
+ "cursor-icon",
+ "dpi 0.1.1 (git+https://github.com/jb55/winit?rev=a5e342540e02a93aca30a4a24e5c68b1313a3ca5)",
  "js-sys",
  "libc",
  "memmap2",
