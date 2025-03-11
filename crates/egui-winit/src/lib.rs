@@ -390,8 +390,8 @@ impl State {
                     .push(egui::Event::TextInputState(TextInputState {
                         text: state.text.clone(),
                         selection: TextSpan {
-                            start: state.selection.start.unwrap_or(1),
-                            end: state.selection.end.unwrap_or(1),
+                            start: state.selection.start.unwrap_or(0),
+                            end: state.selection.end.unwrap_or(0),
                         },
                         compose_region: state.compose_region.start.map(|start| {
                             let end = state.compose_region.end.unwrap_or(start);

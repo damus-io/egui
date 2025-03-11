@@ -49,9 +49,6 @@ pub struct TextEditState {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) ime_cursor_range: CursorRange,
 
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) soft_keyboard_visible: bool,
-
     // Visual offset when editing singleline text bigger than the width.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) singleline_offset: f32,

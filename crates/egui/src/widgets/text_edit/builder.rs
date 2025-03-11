@@ -617,10 +617,7 @@ impl TextEdit<'_> {
         }
 
         // Update the InputState if we're interacting (E.g. updating seleciton or cursor position)
-        if interactive
-            && state.soft_keyboard_visible
-            && (response.drag_stopped() || response.clicked())
-        {
+        if interactive && state.ime_enabled && (response.drag_stopped() || response.clicked()) {
             update_text_input(
                 ui.ctx(),
                 state.cursor.range(&galley),
@@ -703,10 +700,6 @@ impl TextEdit<'_> {
             false
         };
 
-        if ui.memory(|memory| memory.lost_focus(id)) {
-            state.soft_keyboard_visible = false;
-        }
-
         if ui.memory(|mem| mem.has_focus(id)) && ui.input(|i| i.screen_rect_changed()) {
             ui.scroll_to_rect(rect, None);
         }
@@ -771,14 +764,16 @@ impl TextEdit<'_> {
 
                     if text.is_mutable() && interactive {
                         // Send the text input only when the keyboard is initially shown.
-                        if !state.soft_keyboard_visible {
+                        /*
+                        if !state.ime_enabled {
                             update_text_input(
                                 ui.ctx(),
                                 state.cursor.range(&galley),
                                 text.as_str().to_owned(),
                             );
-                            state.soft_keyboard_visible = true;
+                            state.ime_enabled = true
                         }
+                        */
 
                         let now = ui.ctx().input(|i| i.time);
                         if response.changed() || selection_changed {
@@ -1139,6 +1134,12 @@ fn events(
                     None
                 }
             },
+
+            Event::TextInputState(state) => {
+                log::debug!("replacing text edit via TextInputState {state:?}");
+                text.replace_with(&state.text);
+                None
+            }
 
             _ => None,
         };
