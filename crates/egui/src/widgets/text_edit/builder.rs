@@ -764,7 +764,6 @@ impl TextEdit<'_> {
 
                     if text.is_mutable() && interactive {
                         // Send the text input only when the keyboard is initially shown.
-                        /*
                         if !state.ime_enabled {
                             update_text_input(
                                 ui.ctx(),
@@ -773,7 +772,6 @@ impl TextEdit<'_> {
                             );
                             state.ime_enabled = true
                         }
-                        */
 
                         let now = ui.ctx().input(|i| i.time);
                         if response.changed() || selection_changed {
