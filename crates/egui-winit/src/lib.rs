@@ -390,12 +390,12 @@ impl State {
                     .push(egui::Event::TextInputState(TextInputState {
                         text: state.text.clone(),
                         selection: TextSpan {
-                            start: state.selection.start,
-                            end: state.selection.end,
+                            start: state.selection.start.unwrap_or(1),
+                            end: state.selection.end.unwrap_or(1),
                         },
-                        compose_region: state.compose_region.as_ref().map(|r| TextSpan {
-                            start: r.start,
-                            end: r.end,
+                        compose_region: state.compose_region.start.map(|start| {
+                            let end = state.compose_region.end.unwrap_or(start);
+                            TextSpan { start, end }
                         }),
                     }));
                 EventResponse {
@@ -894,19 +894,17 @@ impl State {
             window.set_text_input_state(winit::event::TextInputState {
                 text: text_input_state.text,
                 selection: winit::event::TextSpan {
-                    start: text_input_state.selection.start,
-                    end: text_input_state.selection.end,
+                    start: Some(text_input_state.selection.start),
+                    end: Some(text_input_state.selection.end),
                 },
-                compose_region: text_input_state
-                    .compose_region
-                    .map(|r| winit::event::TextSpan {
-                        start: r.start,
-                        end: r.end,
-                    }),
+                compose_region: winit::event::TextSpan {
+                    start: text_input_state.compose_region.map(|cr| cr.start),
+                    end: text_input_state.compose_region.map(|cr| cr.end),
+                },
             });
         }
 
-        let text_input_this_frame = text_cursor_pos.is_some();
+        let text_input_this_frame = ime.is_some();
         if self.text_input_last_frame != text_input_this_frame {
             if text_input_this_frame {
                 window.begin_ime_input();
@@ -1929,6 +1927,7 @@ pub fn short_window_event_description(event: &winit::event::WindowEvent) -> &'st
         WindowEvent::DoubleTapGesture { .. } => "WindowEvent::DoubleTapGesture",
         WindowEvent::RotationGesture { .. } => "WindowEvent::RotationGesture",
         WindowEvent::TouchpadPressure { .. } => "WindowEvent::TouchpadPressure",
+        WindowEvent::TextInputState { .. } => "WindowEvent::TextInputState",
         WindowEvent::AxisMotion { .. } => "WindowEvent::AxisMotion",
         WindowEvent::Touch { .. } => "WindowEvent::Touch",
         WindowEvent::ScaleFactorChanged { .. } => "WindowEvent::ScaleFactorChanged",
