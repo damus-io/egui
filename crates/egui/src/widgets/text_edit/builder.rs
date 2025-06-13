@@ -1135,8 +1135,29 @@ fn events(
 
             Event::TextInputState(state) => {
                 log::debug!("replacing text edit via TextInputState {state:?}");
-                text.replace_with(&state.text);
-                None
+
+                if &state.text != text.as_str() {
+                    text.replace_with(&state.text);
+
+                    if let Some(region) = &state.compose_region {
+                        Some(CCursorRange::two(
+                            CCursor::new(region.start),
+                            CCursor::new(region.end),
+                        ))
+                    } else {
+                        if state.selection.start == state.selection.end {
+                            Some(CCursorRange::one(CCursor::new(state.selection.start)))
+                        } else {
+                            Some(CCursorRange::two(
+                                CCursor::new(state.selection.start),
+                                CCursor::new(state.selection.end),
+                            ))
+                        }
+                    }
+                } else {
+                    // didn't mutate text
+                    None
+                }
             }
 
             _ => None,
