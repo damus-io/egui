@@ -5,7 +5,7 @@ use raw_window_handle::RawDisplayHandle;
 /// If the "clipboard" feature is off, or we cannot connect to the OS clipboard,
 /// then a fallback clipboard that just works within the same app is used instead.
 pub struct Clipboard {
-    #[cfg(all(feature = "arboard", not(target_os = "android")))]
+    #[cfg(all(feature = "arboard"))]
     arboard: Option<arboard::Clipboard>,
 
     #[cfg(all(
@@ -28,7 +28,7 @@ impl Clipboard {
     /// Construct a new instance
     pub fn new(_raw_display_handle: Option<RawDisplayHandle>) -> Self {
         Self {
-            #[cfg(all(feature = "arboard", not(target_os = "android")))]
+            #[cfg(all(feature = "arboard"))]
             arboard: init_arboard(),
 
             #[cfg(all(
@@ -68,7 +68,7 @@ impl Clipboard {
             };
         }
 
-        #[cfg(all(feature = "arboard", not(target_os = "android")))]
+        #[cfg(all(feature = "arboard"))]
         if let Some(clipboard) = &mut self.arboard {
             return match clipboard.get_text() {
                 Ok(text) => Some(text),
@@ -98,7 +98,7 @@ impl Clipboard {
             return;
         }
 
-        #[cfg(all(feature = "arboard", not(target_os = "android")))]
+        #[cfg(all(feature = "arboard"))]
         if let Some(clipboard) = &mut self.arboard {
             if let Err(err) = clipboard.set_text(text) {
                 log::error!("arboard copy/cut error: {err}");
@@ -110,7 +110,7 @@ impl Clipboard {
     }
 
     pub fn set_image(&mut self, image: &egui::ColorImage) {
-        #[cfg(all(feature = "arboard", not(target_os = "android")))]
+        #[cfg(all(feature = "arboard"))]
         if let Some(clipboard) = &mut self.arboard {
             if let Err(err) = clipboard.set_image(arboard::ImageData {
                 width: image.width(),
@@ -128,7 +128,7 @@ impl Clipboard {
     }
 }
 
-#[cfg(all(feature = "arboard", not(target_os = "android")))]
+#[cfg(all(feature = "arboard"))]
 fn init_arboard() -> Option<arboard::Clipboard> {
     profiling::function_scope!();
 

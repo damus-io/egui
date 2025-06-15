@@ -64,6 +64,8 @@ raw-window-handle.workspace = true
 web-time.workspace = true
 winit = { workspace = true, default-features = false }
 
+arboard = { git = "https://github.com/jb55/arboard", rev = "05755435fc8cf910449a8388bb8926a92b2db51e", optional = true, default-features = false, features = [ "image-data" ] }
+
 #! ### Optional dependencies
 
 # feature accesskit
@@ -85,7 +87,3 @@ smithay-clipboard = { version = "0.7.2", optional = true }
 # a slightly newer version. Remove this when winit upgrades past this version.
 wayland-cursor = { version = "0.31.1", default-features = false, optional = true }
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
-arboard = { version = "3.3", optional = true, default-features = false, features = [
-    "image-data",
-] }
