@@ -14,9 +14,10 @@ use crate::{
     text_selection::{
         text_cursor_state::cursor_rect, visuals::paint_text_selection, CCursorRange, CursorRange,
     },
-    vec2, Align, Align2, Color32, Context, CursorIcon, Event, EventFilter, FontSelection, Id,
-    ImeEvent, Key, KeyboardShortcut, Margin, Modifiers, NumExt, Response, Sense, Shape, TextBuffer,
-    TextStyle, TextWrapMode, Ui, Vec2, Widget, WidgetInfo, WidgetText, WidgetWithState,
+    vec2, Align, Align2, Color32, Context, CursorIcon, Event, EventFilter, FontSelection,
+    IMEPurpose, Id, ImeEvent, Key, KeyboardShortcut, Margin, Modifiers, NumExt, Response, Sense,
+    Shape, TextBuffer, TextStyle, TextWrapMode, Ui, Vec2, Widget, WidgetInfo, WidgetText,
+    WidgetWithState,
 };
 
 use super::{TextEditOutput, TextEditState};
@@ -805,7 +806,16 @@ impl TextEdit<'_> {
                             .unwrap_or_default();
 
                         ui.ctx().output_mut(|o| {
+                            let purpose = if self.multiline {
+                                IMEPurpose::Multiline
+                            } else if self.password {
+                                IMEPurpose::Password
+                            } else {
+                                IMEPurpose::Normal
+                            };
+
                             o.ime = Some(crate::output::IMEOutput {
+                                purpose,
                                 rect: to_global * rect,
                                 cursor_rect: to_global * primary_cursor_rect,
                             });

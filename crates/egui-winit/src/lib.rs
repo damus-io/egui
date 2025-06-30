@@ -907,6 +907,11 @@ impl State {
         let text_input_this_frame = ime.is_some();
         if self.text_input_last_frame != text_input_this_frame {
             if text_input_this_frame {
+                // Set ime purpose if we have it
+                if let Some(ime) = ime {
+                    window.set_ime_purpose(to_winit_ime_purpose(ime.purpose))
+                }
+
                 window.begin_ime_input();
             } else {
                 window.end_ime_input();
@@ -1531,11 +1536,7 @@ fn process_viewport_command(
             );
         }
         ViewportCommand::IMEAllowed(v) => window.set_ime_allowed(v),
-        ViewportCommand::IMEPurpose(p) => window.set_ime_purpose(match p {
-            egui::viewport::IMEPurpose::Password => winit::window::ImePurpose::Password,
-            egui::viewport::IMEPurpose::Terminal => winit::window::ImePurpose::Terminal,
-            egui::viewport::IMEPurpose::Normal => winit::window::ImePurpose::Normal,
-        }),
+        ViewportCommand::IMEPurpose(p) => window.set_ime_purpose(to_winit_ime_purpose(p)),
         ViewportCommand::Focus => {
             if !window.has_focus() {
                 window.focus_window();
@@ -1934,5 +1935,14 @@ pub fn short_window_event_description(event: &winit::event::WindowEvent) -> &'st
         WindowEvent::ThemeChanged { .. } => "WindowEvent::ThemeChanged",
         WindowEvent::Occluded { .. } => "WindowEvent::Occluded",
         WindowEvent::PanGesture { .. } => "WindowEvent::PanGesture",
+    }
+}
+
+fn to_winit_ime_purpose(purpose: egui::viewport::IMEPurpose) -> winit::window::ImePurpose {
+    match purpose {
+        egui::viewport::IMEPurpose::Password => winit::window::ImePurpose::Password,
+        egui::viewport::IMEPurpose::Terminal => winit::window::ImePurpose::Terminal,
+        egui::viewport::IMEPurpose::Normal => winit::window::ImePurpose::Normal,
+        egui::viewport::IMEPurpose::Multiline => winit::window::ImePurpose::Multiline,
     }
 }
