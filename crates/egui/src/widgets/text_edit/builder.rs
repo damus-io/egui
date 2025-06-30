@@ -7,9 +7,10 @@ use epaint::{
 };
 
 use crate::{
-    Align, Align2, Color32, Context, CursorIcon, Event, EventFilter, FontSelection, Id, ImeEvent,
-    Key, KeyboardShortcut, Margin, Modifiers, NumExt as _, Response, Sense, Shape, TextBuffer,
-    TextStyle, TextWrapMode, Ui, Vec2, Widget, WidgetInfo, WidgetText, WidgetWithState, epaint,
+    Align, Align2, Color32, Context, CursorIcon, Event, EventFilter, FontSelection, IMEPurpose, Id,
+    ImeEvent, Key, KeyboardShortcut, Margin, Modifiers, NumExt as _, Response, Sense, Shape,
+    TextBuffer, TextStyle, TextWrapMode, Ui, Vec2, Widget, WidgetInfo, WidgetText, WidgetWithState,
+    epaint,
     os::OperatingSystem,
     output::OutputEvent,
     response, text_selection,
@@ -802,7 +803,16 @@ impl TextEdit<'_> {
                             .unwrap_or_default();
 
                         ui.ctx().output_mut(|o| {
+                            let purpose = if self.multiline {
+                                IMEPurpose::Multiline
+                            } else if self.password {
+                                IMEPurpose::Password
+                            } else {
+                                IMEPurpose::Normal
+                            };
+
                             o.ime = Some(crate::output::IMEOutput {
+                                purpose,
                                 rect: to_global * rect,
                                 cursor_rect: to_global * primary_cursor_rect,
                             });
@@ -901,12 +911,12 @@ fn mask_if_password(is_password: bool, text: &str) -> String {
 }
 
 /// Update the soft keyboard TextInputState
-fn update_text_input(ctx: &Context, cursor_range: Option<CursorRange>, text: String) {
+fn update_text_input(ctx: &Context, cursor_range: Option<CCursorRange>, text: String) {
     ctx.output_mut(|o| {
         let selection = if let Some(cursor_range) = cursor_range {
             crate::TextSpan {
-                start: cursor_range.secondary.ccursor.index,
-                end: cursor_range.primary.ccursor.index,
+                start: cursor_range.secondary.index,
+                end: cursor_range.primary.index,
             }
         } else {
             crate::TextSpan { start: 0, end: 0 }

@@ -1,6 +1,6 @@
 //! All the data egui returns to the backend at the end of each frame.
 
-use crate::{RepaintCause, TextInputState, ViewportIdMap, ViewportOutput, WidgetType};
+use crate::{IMEPurpose, RepaintCause, TextInputState, ViewportIdMap, ViewportOutput, WidgetType};
 
 /// What egui emits each frame from [`crate::Context::run`].
 ///
@@ -70,6 +70,9 @@ impl FullOutput {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct IMEOutput {
+    /// Multiline? Password?
+    pub purpose: IMEPurpose,
+
     /// Where the [`crate::TextEdit`] is located on screen.
     pub rect: crate::Rect,
 

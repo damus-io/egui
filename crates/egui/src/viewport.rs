@@ -950,6 +950,7 @@ pub enum IMEPurpose {
     Normal,
     Password,
     Terminal,
+    Multiline,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
