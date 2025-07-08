@@ -15,6 +15,9 @@ pub use egui;
 #[cfg(feature = "accesskit")]
 use egui::accesskit;
 use egui::{Pos2, Rect, Theme, Vec2, ViewportBuilder, ViewportCommand, ViewportId, ViewportInfo};
+
+#[cfg(target_os = "android")]
+use egui::{TextInputState, TextSpan};
 pub use winit;
 
 pub mod clipboard;
@@ -23,7 +26,6 @@ mod window_settings;
 pub use window_settings::WindowSettings;
 
 use ahash::HashSet;
-use egui::{TextInputState, TextSpan};
 use raw_window_handle::HasDisplayHandle;
 
 use winit::{
@@ -103,6 +105,8 @@ pub struct State {
     has_sent_ime_enabled: bool,
 
     /// Track if there was text input last frame, needed for mobile soft keyboard inputs
+
+    #[cfg(target_os = "android")]
     text_input_last_frame: bool,
 
     #[cfg(feature = "accesskit")]
@@ -146,6 +150,8 @@ impl State {
             pointer_touch_id: None,
 
             has_sent_ime_enabled: false,
+
+            #[cfg(target_os = "android")]
             text_input_last_frame: false,
 
             #[cfg(feature = "accesskit")]
@@ -385,22 +391,33 @@ impl State {
             }
 
             WindowEvent::TextInputState(state) => {
-                self.egui_input
-                    .events
-                    .push(egui::Event::TextInputState(TextInputState {
-                        text: state.text.clone(),
-                        selection: TextSpan {
-                            start: state.selection.start.unwrap_or(0),
-                            end: state.selection.end.unwrap_or(0),
-                        },
-                        compose_region: state.compose_region.start.map(|start| {
-                            let end = state.compose_region.end.unwrap_or(start);
-                            TextSpan { start, end }
-                        }),
-                    }));
-                EventResponse {
-                    repaint: true,
-                    consumed: self.egui_ctx.wants_keyboard_input(),
+                #[cfg(target_os = "android")]
+                {
+                    self.egui_input
+                        .events
+                        .push(egui::Event::TextInputState(TextInputState {
+                            text: state.text.clone(),
+                            selection: TextSpan {
+                                start: state.selection.start.unwrap_or(0),
+                                end: state.selection.end.unwrap_or(0),
+                            },
+                            compose_region: state.compose_region.start.map(|start| {
+                                let end = state.compose_region.end.unwrap_or(start);
+                                TextSpan { start, end }
+                            }),
+                        }));
+                    EventResponse {
+                        repaint: true,
+                        consumed: self.egui_ctx.wants_keyboard_input(),
+                    }
+                }
+
+                #[cfg(not(target_os = "android"))]
+                {
+                    EventResponse {
+                        repaint: true,
+                        consumed: false,
+                    }
                 }
             }
 
@@ -904,26 +921,30 @@ impl State {
             });
         }
 
-        let text_input_this_frame = ime.is_some();
-        if self.text_input_last_frame != text_input_this_frame {
-            if text_input_this_frame {
-                // Set ime purpose if we have it
-                if let Some(ime) = ime {
-                    window.set_ime_purpose(to_winit_ime_purpose(ime.purpose))
+        #[cfg(target_os = "android")]
+        {
+            let text_input_this_frame = ime.is_some();
+
+            if self.text_input_last_frame != text_input_this_frame {
+                if text_input_this_frame {
+                    // Set ime purpose if we have it
+                    if let Some(ime) = ime {
+                        window.set_ime_purpose(to_winit_ime_purpose(ime.purpose))
+                    }
+
+                    window.begin_ime_input();
+                } else {
+                    window.end_ime_input();
                 }
-
-                window.begin_ime_input();
-            } else {
-                window.end_ime_input();
             }
-        }
-        self.text_input_last_frame = text_input_this_frame;
+            self.text_input_last_frame = text_input_this_frame;
 
-        let allow_ime = ime.is_some();
-        if self.allow_ime != allow_ime {
-            self.allow_ime = allow_ime;
-            profiling::scope!("set_ime_allowed");
-            window.set_ime_allowed(allow_ime);
+            let allow_ime = ime.is_some();
+            if self.allow_ime != allow_ime {
+                self.allow_ime = allow_ime;
+                profiling::scope!("set_ime_allowed");
+                window.set_ime_allowed(allow_ime);
+            }
         }
 
         if let Some(ime) = ime {
