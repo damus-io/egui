@@ -618,6 +618,7 @@ impl TextEdit<'_> {
         }
 
         // Update the InputState if we're interacting (E.g. updating seleciton or cursor position)
+        #[cfg(target_os = "android")]
         if interactive && state.ime_enabled && (response.drag_stopped() || response.clicked()) {
             update_text_input(
                 ui.ctx(),
@@ -768,6 +769,8 @@ impl TextEdit<'_> {
 
                     if text.is_mutable() && interactive {
                         // Send the text input only when the keyboard is initially shown.
+
+                        #[cfg(target_os = "android")]
                         if !state.ime_enabled {
                             update_text_input(
                                 ui.ctx(),
@@ -911,7 +914,8 @@ fn mask_if_password(is_password: bool, text: &str) -> String {
 }
 
 /// Update the soft keyboard TextInputState
-fn update_text_input(ctx: &Context, cursor_range: Option<CCursorRange>, text: String) {
+#[cfg(target_os = "android")]
+fn update_text_input(ctx: &Context, cursor_range: Option<CursorRange>, text: String) {
     ctx.output_mut(|o| {
         let selection = if let Some(cursor_range) = cursor_range {
             crate::TextSpan {
