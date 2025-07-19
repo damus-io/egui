@@ -206,6 +206,7 @@ fn set_title_and_icon_mac(title: &str, icon_data: Option<&IconData>) -> AppIconS
     use objc2::ClassType as _;
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSString;
+    use objc2::AnyThread;
 
     // Do NOT use png even though creating `NSImage` from it is much easier than from raw images data!
     //
