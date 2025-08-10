@@ -179,11 +179,7 @@ impl Default for WgpuSetupCreateNew {
             native_adapter_selector: None,
 
             device_descriptor: Arc::new(|adapter| {
-                let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                };
+                let base_limits = wgpu::Limits::downlevel_webgl2_defaults();
 
                 wgpu::DeviceDescriptor {
                     label: Some("egui wgpu device"),
