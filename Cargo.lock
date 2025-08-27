@@ -174,7 +174,7 @@ dependencies = [
 [[package]]
 name = "android-activity"
 version = "0.6.0"
-source = "git+https://github.com/damus-io/android-activity?rev=c3c0decc83c4d6c94d2c448391fc8dd51b13f3d9#c3c0decc83c4d6c94d2c448391fc8dd51b13f3d9"
+source = "git+https://github.com/damus-io/android-activity?rev=4ee16f1585e4a75031dc10785163d4b920f95805#4ee16f1585e4a75031dc10785163d4b920f95805"
 dependencies = [
  "android-properties",
  "bitflags 2.9.1",
@@ -1229,7 +1229,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dpi"
 version = "0.1.1"
-source = "git+https://github.com/damus-io/winit?rev=eaff639ab0a14fccf595241f687be883154b267c#eaff639ab0a14fccf595241f687be883154b267c"
+source = "git+https://github.com/damus-io/winit?rev=a07ea4c4d76cdc5306da8e8aabb05cab1a7d8e4d#a07ea4c4d76cdc5306da8e8aabb05cab1a7d8e4d"
 
 [[package]]
 name = "dpi"
@@ -5592,10 +5592,10 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 [[package]]
 name = "winit"
 version = "0.30.8"
-source = "git+https://github.com/damus-io/winit?rev=eaff639ab0a14fccf595241f687be883154b267c#eaff639ab0a14fccf595241f687be883154b267c"
+source = "git+https://github.com/damus-io/winit?rev=a07ea4c4d76cdc5306da8e8aabb05cab1a7d8e4d#a07ea4c4d76cdc5306da8e8aabb05cab1a7d8e4d"
 dependencies = [
  "ahash",
- "android-activity 0.6.0 (git+https://github.com/damus-io/android-activity?rev=c3c0decc83c4d6c94d2c448391fc8dd51b13f3d9)",
+ "android-activity 0.6.0 (git+https://github.com/damus-io/android-activity?rev=4ee16f1585e4a75031dc10785163d4b920f95805)",
  "atomic-waker",
  "bitflags 2.9.1",
  "block2 0.5.1",
