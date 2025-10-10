@@ -249,6 +249,6 @@ impl<'l> StripLayout<'l> {
         rect.set_right(self.max.x);
         rect.set_bottom(self.max.y);
 
-        self.ui.allocate_rect(rect, Sense::hover())
+        self.ui.allocate_rect(rect, self.sense)
     }
 }
