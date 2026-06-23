@@ -581,7 +581,17 @@ impl TextEdit<'_> {
         let painter = ui.painter_at(text_clip_rect.expand(1.0)); // expand to avoid clipping cursor
 
         if interactive {
-            if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+            if let Some(pointer_pos) = ui.ctx().pointer_interact_pos().map(|p| {
+                // `pointer_interact_pos` is in global coordinates, but `rect` is
+                // in the local coordinates of the current layer. When the layer
+                // carries a transform (e.g. inside a panned/zoomed `Scene`) the
+                // two spaces diverge, so map the pointer into layer-local space
+                // before using it for cursor placement — mirroring what
+                // `Response::interact_pointer_pos` already does.
+                ui.ctx()
+                    .layer_transform_from_global(ui.layer_id())
+                    .map_or(p, |t| t * p)
+            }) {
                 if response.hovered() && text.is_mutable() {
                     ui.output_mut(|o| o.mutable_text_under_cursor = true);
                 }
