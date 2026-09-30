@@ -1133,6 +1133,8 @@ impl State {
     ) {
         profiling::function_scope!();
 
+        // `..` so a fork that adds fields to `PlatformOutput` doesn't break this pattern.
+        #[expect(clippy::rest_pat_in_fully_bound_structs)]
         let egui::PlatformOutput {
             commands,
             cursor_icon,
@@ -1143,6 +1145,7 @@ impl State {
             accesskit_update,
             num_completed_passes: _,    // `egui::Context::run` handles this
             request_discard_reasons: _, // `egui::Context::run` handles this
+            ..
         } = platform_output;
 
         for command in commands {
