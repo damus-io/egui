@@ -174,7 +174,7 @@ dependencies = [
  "android-properties",
  "bitflags 2.13.1",
  "cc",
- "jni",
+ "jni 0.22.4",
  "libc",
  "log",
  "ndk",
@@ -281,13 +281,14 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "arboard"
-version = "3.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0348a1c054491f4bfe6ab86a7b6ab1e44e45d899005de92f58b3df180b36ddaf"
+version = "3.5.0"
+source = "git+https://github.com/jb55/arboard?rev=05755435fc8cf910449a8388bb8926a92b2db51e#05755435fc8cf910449a8388bb8926a92b2db51e"
 dependencies = [
  "clipboard-win",
  "image",
+ "jni 0.21.1",
  "log",
+ "ndk-context",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
@@ -717,6 +718,12 @@ dependencies = [
  "libc",
  "shlex",
 ]
+
+[[package]]
+name = "cesu8"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
 
 [[package]]
 name = "cfg-if"
@@ -2543,6 +2550,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "jni"
+version = "0.21.1"
+source = "git+https://github.com/jni-rs/jni-rs?rev=1a4a345b1e65aca405e856046ff2661d37edde6d#1a4a345b1e65aca405e856046ff2661d37edde6d"
+dependencies = [
+ "cesu8",
+ "cfg-if",
+ "combine",
+ "jni-sys 0.4.1",
+ "log",
+ "once_cell",
+ "static_assertions",
+ "thiserror 2.0.20",
+ "walkdir",
 ]
 
 [[package]]
@@ -5538,7 +5561,7 @@ version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62c35be770821a214dbc362fc26908c853e776c0004294d0b10b8a6bad582f94"
 dependencies = [
- "jni",
+ "jni 0.22.4",
  "log",
  "ndk-context",
  "objc2 0.6.4",

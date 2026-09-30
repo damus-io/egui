@@ -80,7 +80,8 @@ ahash = { version = "0.8.12", default-features = false, features = [
   "std",
 ] }
 android_logger = "0.15.1"
-arboard = { version = "3.6", default-features = false }
+# jb55/arboard: arboard 3.5 + an Android clipboard backend. crates.io arboard has none.
+arboard = { git = "https://github.com/jb55/arboard", rev = "05755435fc8cf910449a8388bb8926a92b2db51e", default-features = false }
 backtrace = "0.3.76"
 bitflags = "2.13"
 bytemuck = "1.25"

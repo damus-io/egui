@@ -103,5 +103,7 @@ smithay-clipboard = { workspace = true, optional = true }
 # a slightly newer version. Remove this when winit upgrades past this version.
 wayland-cursor = { workspace = true, optional = true }
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
+# Unlike upstream, arboard is also used on Android: the workspace pins jb55/arboard, which has an
+# Android backend.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
 arboard = { workspace = true, optional = true, features = ["image-data"] }

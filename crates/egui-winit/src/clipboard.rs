@@ -5,10 +5,7 @@ use raw_window_handle::RawDisplayHandle;
 /// If the "clipboard" feature is off, or we cannot connect to the OS clipboard,
 /// then a fallback clipboard that just works within the same app is used instead.
 pub struct Clipboard {
-    #[cfg(all(
-        not(any(target_os = "android", target_os = "ios")),
-        feature = "arboard",
-    ))]
+    #[cfg(all(not(target_os = "ios"), feature = "arboard"))]
     arboard: Option<arboard::Clipboard>,
 
     #[cfg(all(
@@ -31,10 +28,7 @@ impl Clipboard {
     /// Construct a new instance
     pub fn new(_raw_display_handle: Option<RawDisplayHandle>) -> Self {
         Self {
-            #[cfg(all(
-                not(any(target_os = "android", target_os = "ios")),
-                feature = "arboard",
-            ))]
+            #[cfg(all(not(target_os = "ios"), feature = "arboard"))]
             arboard: init_arboard(),
 
             #[cfg(all(
@@ -76,10 +70,7 @@ impl Clipboard {
             }
         }
 
-        #[cfg(all(
-            not(any(target_os = "android", target_os = "ios")),
-            feature = "arboard",
-        ))]
+        #[cfg(all(not(target_os = "ios"), feature = "arboard"))]
         if let Some(clipboard) = &mut self.arboard {
             return match clipboard.get_text() {
                 Ok(text) => Some(text),
@@ -115,10 +106,7 @@ impl Clipboard {
             return;
         }
 
-        #[cfg(all(
-            not(any(target_os = "android", target_os = "ios")),
-            feature = "arboard",
-        ))]
+        #[cfg(all(not(target_os = "ios"), feature = "arboard"))]
         if let Some(clipboard) = &mut self.arboard {
             if let Err(err) = clipboard.set_text(text) {
                 log::error!("arboard copy/cut error: {err}");
@@ -135,10 +123,7 @@ impl Clipboard {
     /// paste can carry an image (e.g. a screenshot or a copied image) instead of text — see
     /// [`egui::Event::PasteImage`].
     pub fn get_image(&mut self) -> Option<egui::ColorImage> {
-        #[cfg(all(
-            not(any(target_os = "android", target_os = "ios")),
-            feature = "arboard",
-        ))]
+        #[cfg(all(not(target_os = "ios"), feature = "arboard"))]
         if let Some(clipboard) = &mut self.arboard {
             return match clipboard.get_image() {
                 Ok(image) => Some(color_image_from_arboard(&image)),
@@ -158,10 +143,7 @@ impl Clipboard {
     }
 
     pub fn set_image(&mut self, image: &egui::ColorImage) {
-        #[cfg(all(
-            not(any(target_os = "android", target_os = "ios")),
-            feature = "arboard",
-        ))]
+        #[cfg(all(not(target_os = "ios"), feature = "arboard"))]
         if let Some(clipboard) = &mut self.arboard {
             if let Err(err) = clipboard.set_image(arboard::ImageData {
                 width: image.width(),
@@ -188,26 +170,17 @@ impl Clipboard {
 ///
 /// Pulled out as its own pure function (rather than inlined in the two `match`es above) so it
 /// can be unit-tested without touching the real OS clipboard, which CI can't rely on.
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(target_os = "ios"), feature = "arboard"))]
 fn is_expected_content_absence(err: &arboard::Error) -> bool {
     matches!(err, arboard::Error::ContentNotAvailable)
 }
 
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(target_os = "ios"), feature = "arboard"))]
 fn color_image_from_arboard(image: &arboard::ImageData<'_>) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.bytes)
 }
 
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(target_os = "ios"), feature = "arboard"))]
 fn init_arboard() -> Option<arboard::Clipboard> {
     profiling::function_scope!();
 
@@ -253,10 +226,7 @@ fn init_smithay_clipboard(
     }
 }
 
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(target_os = "ios"), feature = "arboard"))]
 #[cfg(test)]
 mod tests {
     use super::{color_image_from_arboard, is_expected_content_absence};
