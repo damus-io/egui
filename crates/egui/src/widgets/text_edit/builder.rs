@@ -935,6 +935,12 @@ impl<'t> TextEdit<'t> {
 
         let has_focus = ui.memory(|mem| mem.has_focus(id));
 
+        // The cursor as the events left it, indexing into `text`. The soft keyboard must get this
+        // one: on the first keystroke into hint text, `galley` is still the empty one, and a
+        // cursor clamped to it would lag `text` by a pass.
+        #[cfg(any(target_os = "android", test))]
+        let events_cursor_range = cursor_range;
+
         // Keep a focused edit in view when the content rect changes, e.g. when the window
         // shrinks to make room for a mobile soft keyboard.
         if has_focus && ui.input(|i| i.content_rect_changed()) {
@@ -973,7 +979,7 @@ impl<'t> TextEdit<'t> {
                         sync_soft_keyboard(
                             ui.ctx(),
                             &mut state,
-                            cursor_range,
+                            events_cursor_range.unwrap_or(cursor_range),
                             text.as_str(),
                             response.dragged(),
                         );
@@ -1506,25 +1512,41 @@ const SOFT_KEYBOARD_DIFF_TIMEOUT: core::time::Duration = core::time::Duration::f
 ///
 /// Insertions honour `char_limit`, and a buffer that inserts fewer chars than asked shifts the
 /// rest of the diff accordingly, so the result can differ from `after`.
+///
+/// Every deletion runs before any insertion, so the limit counts the room the deletions free even
+/// when the diff orders an insertion first (an autocorrect swap on a full field).
 fn apply_text_diff(text: &mut dyn TextBuffer, after: &str, char_limit: usize) {
     let before = text.as_str().to_owned();
     let diff = similar::TextDiff::configure()
         .timeout(SOFT_KEYBOARD_DIFF_TIMEOUT)
         .diff_chars(before.as_str(), after);
+    let changes: Vec<_> = diff.iter_all_changes().collect();
 
-    let mut cursor = CCursor::new(0);
-    for change in diff.iter_all_changes() {
+    // Back to front, so each deletion's index into `before` still holds when it runs.
+    let mut end = before.chars().count();
+    for change in changes.iter().rev() {
+        let len = change.value().chars().count();
         match change.tag() {
             similar::ChangeTag::Delete => {
-                let len = change.value().chars().count();
-                text.delete_char_range(cursor.index..CharIndex(cursor.index.0 + len));
+                text.delete_char_range(CharIndex(end - len)..CharIndex(end));
+                end -= len;
             }
+            similar::ChangeTag::Equal => end -= len,
+            similar::ChangeTag::Insert => {}
+        }
+    }
+
+    // What is left of `before` is exactly the equal runs, so the cursor steps over those.
+    let mut cursor = CCursor::new(0);
+    for change in &changes {
+        match change.tag() {
             similar::ChangeTag::Insert => {
                 text.insert_text_at(&mut cursor, change.value(), char_limit);
             }
             similar::ChangeTag::Equal => {
                 cursor.index.0 += change.value().chars().count();
             }
+            similar::ChangeTag::Delete => {}
         }
     }
 }
@@ -1854,6 +1876,20 @@ mod tests {
         assert_eq!(buffer, "xyzde");
     }
 
+    /// On a full field, an insertion the diff puts before a deletion still fits, because every
+    /// deletion runs before any insertion.
+    #[test]
+    fn apply_text_diff_deletes_before_it_checks_the_char_limit() {
+        // An autocorrect swap: the diff inserts the 'h' before it deletes the old one.
+        let mut buffer = String::from("teh cat");
+        apply_text_diff(&mut buffer, "the cat", 7);
+        assert_eq!(buffer, "the cat");
+
+        let mut buffer = String::from("abcde");
+        apply_text_diff(&mut buffer, "aXbcd", 5);
+        assert_eq!(buffer, "aXbcd");
+    }
+
     // ------------------------------------------------------------------------
     // Soft keyboard sync. `TextEdit` only tracks the keyboard on Android and in these tests.
 
@@ -2015,6 +2051,32 @@ mod tests {
             focused(ui, id, TextEdit::singleline(&mut text));
         });
         assert_eq!(out, Some(sent("hello", 1, 4)));
+    }
+
+    /// The first keystroke into an edit showing hint text is not echoed back. That pass still
+    /// paints the empty galley, and a cursor clamped to it would send the keyboard `0..0` for the
+    /// text it had just typed, jumping its cursor back.
+    #[test]
+    fn typing_into_hint_text_is_not_echoed() {
+        let ctx = Context::default();
+        let id = Id::unique("soft_keyboard_hint");
+        let mut text = String::new();
+        let pass = |events: Vec<Event>, text: &mut String| {
+            run(&ctx, events, |ui| {
+                focused(
+                    ui,
+                    id,
+                    TextEdit::singleline(text).hint_text("say something"),
+                );
+            })
+        };
+
+        assert_eq!(pass(vec![], &mut text), Some(sent("", 0, 0)));
+        assert_eq!(pass(vec![keyboard("h", 1, 1)], &mut text), None);
+        assert_eq!(text, "h");
+        assert_eq!(pass(vec![], &mut text), None);
+        assert_eq!(pass(vec![keyboard("he", 2, 2)], &mut text), None);
+        assert_eq!(text, "he");
     }
 
     #[test]
