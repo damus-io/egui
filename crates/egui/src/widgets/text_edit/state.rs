@@ -57,10 +57,33 @@ pub struct TextEditState {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) last_interaction_time: f64,
 
-    /// Has the soft keyboard been sent this edit's text since the edit last gained IME ownership?
-    #[cfg(target_os = "android")]
+    /// What the mobile soft keyboard holds for this edit, or `None` if it has not been sent this
+    /// edit's text since the edit last gained IME ownership (so it still holds another edit's).
+    #[cfg(any(target_os = "android", test))]
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) soft_keyboard_synced: bool,
+    pub(crate) soft_keyboard: Option<SoftKeyboardCopy>,
+}
+
+/// The mobile soft keyboard's copy of a focused [`crate::TextEdit`]'s text and selection.
+///
+/// The keyboard keeps its own copy of the text and sends the whole of it on every change, so the
+/// edit remembers what the keyboard was last sent or last sent back. Whenever the edit's own text
+/// or selection no longer matches, it changed through some other path (an app edit, a hardware
+/// key, paste, undo, the pointer) and the keyboard has to be sent the edit's state again.
+#[cfg(any(target_os = "android", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SoftKeyboardCopy {
+    /// [`epaint::util::hash`] of the keyboard's text. A hash rather than the text, so that
+    /// cloning the state every pass does not allocate.
+    pub text_hash: u64,
+
+    /// The keyboard's selection, with `start <= end`.
+    pub selection: crate::TextSpan,
+
+    /// [`crate::Context::cumulative_pass_nr`] of the last pass this edit owned the IME. The copy
+    /// is only trusted in the pass right after: an edit that was hidden or lost focus in between
+    /// may have had its keyboard handed to another edit.
+    pub pass_nr: u64,
 }
 
 impl TextEditState {

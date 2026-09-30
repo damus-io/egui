@@ -85,3 +85,26 @@ fn platform_output_append_keeps_the_latest_text_input_state() {
     });
     assert_eq!(output.text_input_state, Some(state("newer")));
 }
+
+/// A read-only buffer has nothing for the keyboard to edit, so its state does not move the cursor
+/// either.
+#[test]
+fn text_input_state_leaves_an_immutable_buffer_alone() {
+    let id = Id::unique("immutable_text_edit");
+    let mut harness = Harness::builder()
+        .with_accessibility_check(false)
+        .build_ui(move |ui| {
+            let mut text = "read only";
+            ui.add(TextEdit::singleline(&mut text).id(id))
+                .request_focus();
+        });
+    harness.run();
+
+    harness.input_mut().events.push(keyboard_state("read", 2));
+    harness.run();
+
+    let cursor = TextEditState::load(&harness.ctx, id)
+        .and_then(|state| state.cursor.char_range())
+        .expect("the focused edit should have a cursor");
+    assert_eq!(cursor.primary.index.0, 9);
+}

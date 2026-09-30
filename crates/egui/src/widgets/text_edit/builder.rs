@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use emath::{Rect, TSTransform};
 use epaint::text::{CharIndex, Galley, LayoutJob, TextWrapMode, cursor::CCursor};
@@ -7,8 +7,8 @@ use crate::{
     Align, Align2, AsIdSalt, AtomExt as _, AtomKind, Atoms, Color32, Context, CursorIcon, Event,
     EventFilter, FontSelection, Frame, IMEPurpose, Id, IdSalt, ImeEvent, IntoAtoms,
     IntoSizedResult, Key, KeyboardShortcut, Margin, Modifiers, NumExt as _, Response, Sense,
-    SizedAtomKind, TextBuffer, TextSpan, TextStyle, Ui, Vec2, Widget, WidgetAtom, WidgetInfo,
-    WidgetWithState,
+    SizedAtomKind, TextBuffer, TextInputState, TextSpan, TextStyle, Ui, Vec2, Widget, WidgetAtom,
+    WidgetInfo, WidgetWithState,
     class::{ClassName, Classes, HasClasses},
     epaint,
     os::OperatingSystem,
@@ -23,6 +23,9 @@ use crate::{
 };
 
 use super::{TextEditOutput, TextEditState};
+
+#[cfg(any(target_os = "android", test))]
+use super::state::SoftKeyboardCopy;
 
 type LayouterFn<'t> = &'t mut dyn FnMut(&Ui, &dyn TextBuffer, f32) -> Arc<Galley>;
 
@@ -615,11 +618,20 @@ impl<'t> TextEdit<'t> {
         let mut prev_cursor_range = None;
 
         let owns_ime_events = ui.memory(|mem| mem.owns_ime_events(id));
+
+        // Forget the keyboard's copy unless this edit also owned the IME in the previous pass.
+        // Resetting only when drawn without focus is not enough: an edit that is hidden while
+        // focused loses focus without being drawn, and can get it back before it is drawn again.
+        #[cfg(any(target_os = "android", test))]
+        if !owns_ime_events
+            || state
+                .soft_keyboard
+                .is_some_and(|copy| copy.pass_nr + 1 < ui.ctx().cumulative_pass_nr())
+        {
+            state.soft_keyboard = None;
+        }
+
         if !owns_ime_events {
-            #[cfg(target_os = "android")]
-            {
-                state.soft_keyboard_synced = false;
-            }
             state.cursor_purpose = TextEditCursorPurpose::Selection;
             if !state.cursor.is_empty() {
                 state.cursor.set_char_range(
@@ -869,15 +881,6 @@ impl<'t> TextEdit<'t> {
             }
         }
 
-        // The user placed the cursor or a selection with the pointer: tell the soft keyboard.
-        #[cfg(target_os = "android")]
-        if interactive
-            && state.soft_keyboard_synced
-            && (response.drag_stopped() || response.clicked())
-        {
-            update_text_input(ui.ctx(), state.cursor.range(&galley), text.as_str());
-        }
-
         if interactive && response.hovered() {
             ui.set_cursor_icon(CursorIcon::Text);
         }
@@ -965,11 +968,15 @@ impl<'t> TextEdit<'t> {
                 }
 
                 if text.is_mutable() && interactive {
-                    // Send the soft keyboard our text once, when it is first shown for this edit.
-                    #[cfg(target_os = "android")]
-                    if !state.soft_keyboard_synced && ui.memory(|mem| mem.owns_ime_events(id)) {
-                        update_text_input(ui.ctx(), Some(cursor_range), text.as_str());
-                        state.soft_keyboard_synced = true;
+                    #[cfg(any(target_os = "android", test))]
+                    if ui.memory(|mem| mem.owns_ime_events(id)) {
+                        sync_soft_keyboard(
+                            ui.ctx(),
+                            &mut state,
+                            cursor_range,
+                            text.as_str(),
+                            response.dragged(),
+                        );
                     }
 
                     let now = ui.input(|i| i.time);
@@ -1426,18 +1433,24 @@ fn events(
                 }
             }
 
-            Event::TextInputState(input_state) if owns_ime_events => {
-                if input_state.text == text.as_str() {
+            Event::TextInputState(input_state)
+                if owns_ime_events && soft_keyboard_has_this_edit(state) =>
+            {
+                #[cfg(any(target_os = "android", test))]
+                note_soft_keyboard_state(ui.ctx(), state, input_state);
+
+                let (keyboard_text, selection) = keyboard_text(input_state, multiline);
+                if !text.is_mutable() {
+                    None
+                } else if keyboard_text == text.as_str() {
+                    // Only the selection moved: that is not a text change.
+                    cursor_range = keyboard_cursor_range(selection, text);
                     None
                 } else {
-                    apply_text_diff(text, &input_state.text);
-
-                    let TextSpan { start, end } = input_state.selection;
-                    Some(CursorMutation::Selection(if start == end {
-                        CCursorRange::one(CCursor::new(start))
-                    } else {
-                        CCursorRange::two(CCursor::new(start), CCursor::new(end))
-                    }))
+                    apply_text_diff(text, &keyboard_text, char_limit);
+                    Some(CursorMutation::Selection(keyboard_cursor_range(
+                        selection, text,
+                    )))
                 }
             }
 
@@ -1480,53 +1493,165 @@ fn events(
     (any_change, cursor_range)
 }
 
+/// How long [`apply_text_diff`] may spend finding the smallest diff before it settles for a
+/// coarser one. Keyboard edits are small, but a keyboard that replaces a long text wholesale
+/// would otherwise cost a quadratic diff inside a single frame.
+const SOFT_KEYBOARD_DIFF_TIMEOUT: core::time::Duration = core::time::Duration::from_millis(5);
+
 /// Turn `text` into `after` with the fewest char insertions and deletions.
 ///
 /// Used for text coming from a mobile soft keyboard, which always sends the whole text. Editing
 /// in place instead of replacing the whole buffer keeps custom [`TextBuffer`]s (e.g. ones that
 /// track spans such as mentions) intact.
-fn apply_text_diff(text: &mut dyn TextBuffer, after: &str) {
+///
+/// Insertions honour `char_limit`, and a buffer that inserts fewer chars than asked shifts the
+/// rest of the diff accordingly, so the result can differ from `after`.
+fn apply_text_diff(text: &mut dyn TextBuffer, after: &str, char_limit: usize) {
     let before = text.as_str().to_owned();
-    let diff = similar::TextDiff::from_chars(before.as_str(), after);
+    let diff = similar::TextDiff::configure()
+        .timeout(SOFT_KEYBOARD_DIFF_TIMEOUT)
+        .diff_chars(before.as_str(), after);
 
-    let mut cursor = 0;
+    let mut cursor = CCursor::new(0);
     for change in diff.iter_all_changes() {
-        let len = change.value().chars().count();
         match change.tag() {
             similar::ChangeTag::Delete => {
-                text.delete_char_range(CharIndex(cursor)..CharIndex(cursor + len));
+                let len = change.value().chars().count();
+                text.delete_char_range(cursor.index..CharIndex(cursor.index.0 + len));
             }
             similar::ChangeTag::Insert => {
-                text.insert_text(change.value(), CharIndex(cursor));
-                cursor += len;
+                text.insert_text_at(&mut cursor, change.value(), char_limit);
             }
             similar::ChangeTag::Equal => {
-                cursor += len;
+                cursor.index.0 += change.value().chars().count();
             }
         }
     }
 }
 
-/// Send the soft keyboard this edit's text and selection.
+/// The text and selection a soft keyboard state asks for, with the newlines a single-line edit
+/// cannot hold stripped (and the selection moved to match).
+fn keyboard_text(input_state: &TextInputState, multiline: bool) -> (Cow<'_, str>, TextSpan) {
+    let is_newline = |c: char| c == '\n' || c == '\r';
+    let TextInputState {
+        text, selection, ..
+    } = input_state;
+
+    if multiline || !text.contains(is_newline) {
+        return (Cow::Borrowed(text.as_str()), *selection);
+    }
+
+    let without_newlines_before =
+        |index: usize| index - text.chars().take(index).filter(|&c| is_newline(c)).count();
+    let selection = TextSpan {
+        start: without_newlines_before(selection.start),
+        end: without_newlines_before(selection.end),
+    };
+    (Cow::Owned(text.replace(is_newline, "")), selection)
+}
+
+/// A soft keyboard selection as a cursor range, clamped to the text.
+fn keyboard_cursor_range(selection: TextSpan, text: &dyn TextBuffer) -> CCursorRange {
+    let num_chars = text.as_str().chars().count();
+    let start = CCursor::new(selection.start.min(num_chars));
+    let end = CCursor::new(selection.end.min(num_chars));
+    if start == end {
+        CCursorRange::one(end)
+    } else {
+        CCursorRange::two(start, end)
+    }
+}
+
+/// Can a soft keyboard state be applied to this edit?
+///
+/// Not until the keyboard has been sent this edit's text: until then, the keyboard's text is
+/// whatever edit it was showing before.
+#[cfg(any(target_os = "android", test))]
+fn soft_keyboard_has_this_edit(state: &TextEditState) -> bool {
+    state.soft_keyboard.is_some()
+}
+
+/// Can a soft keyboard state be applied to this edit?
+///
+/// Only Android tracks what the soft keyboard holds.
+#[cfg(not(any(target_os = "android", test)))]
+fn soft_keyboard_has_this_edit(_state: &TextEditState) -> bool {
+    true
+}
+
+/// A selection with `start <= end`, as [`TextSpan`] requires.
+#[cfg(any(target_os = "android", test))]
+fn sorted_text_span(cursor_range: &CCursorRange) -> TextSpan {
+    let [start, end] = cursor_range.sorted_cursors();
+    TextSpan {
+        start: start.index.0,
+        end: end.index.0,
+    }
+}
+
+/// Remember what the soft keyboard now holds: the state it just sent.
+#[cfg(any(target_os = "android", test))]
+fn note_soft_keyboard_state(
+    ctx: &Context,
+    state: &mut TextEditState,
+    input_state: &TextInputState,
+) {
+    let TextSpan { start, end } = input_state.selection;
+    state.soft_keyboard = Some(SoftKeyboardCopy {
+        text_hash: epaint::util::hash(input_state.text.as_str()),
+        selection: TextSpan {
+            start: start.min(end),
+            end: start.max(end),
+        },
+        pass_nr: ctx.cumulative_pass_nr(),
+    });
+}
+
+/// Send the soft keyboard this edit's text and selection if its copy is out of date.
+///
+/// That is when the edit first owns the IME, and whenever the text or selection changed through
+/// anything but the keyboard: an app edit, a hardware key, paste, cut, undo, the pointer. While
+/// the pointer is still dragging a selection, only text changes are sent.
 ///
 /// A non-empty selection is also sent as the composing region, which is what the keyboard uses
 /// for suggestions.
-#[cfg(target_os = "android")]
-fn update_text_input(ctx: &Context, cursor_range: Option<CCursorRange>, text: &str) {
-    let selection = cursor_range.map_or(TextSpan { start: 0, end: 0 }, |range| TextSpan {
-        start: range.secondary.index.0,
-        end: range.primary.index.0,
+#[cfg(any(target_os = "android", test))]
+fn sync_soft_keyboard(
+    ctx: &Context,
+    state: &mut TextEditState,
+    cursor_range: CCursorRange,
+    text: &str,
+    dragging: bool,
+) {
+    let pass_nr = ctx.cumulative_pass_nr();
+    let ours = SoftKeyboardCopy {
+        text_hash: epaint::util::hash(text),
+        selection: sorted_text_span(&cursor_range),
+        pass_nr,
+    };
+
+    let up_to_date = state.soft_keyboard.is_some_and(|copy| {
+        copy.text_hash == ours.text_hash && (copy.selection == ours.selection || dragging)
     });
+    if up_to_date {
+        if let Some(copy) = &mut state.soft_keyboard {
+            copy.pass_nr = pass_nr;
+        }
+        return;
+    }
+
+    let selection = ours.selection;
     let compose_region = (selection.start != selection.end).then_some(selection);
 
     log::debug!("update egui->android TextInputState {selection:?}");
     ctx.output_mut(|o| {
-        o.text_input_state = Some(crate::TextInputState {
+        o.text_input_state = Some(TextInputState {
             text: text.to_owned(),
             selection,
             compose_region,
         });
     });
+    state.soft_keyboard = Some(ours);
 }
 
 // ----------------------------------------------------------------------------
@@ -1609,10 +1734,13 @@ fn check_for_mutating_key_press(
 mod tests {
     use core::ops::Range;
 
-    use epaint::text::CharIndex;
+    use epaint::text::{CharIndex, cursor::CCursor};
 
     use super::apply_text_diff;
-    use crate::TextBuffer;
+    use crate::{
+        Context, Event, Id, Key, Modifiers, RawInput, TextBuffer, TextEdit, TextInputState,
+        TextSpan, Ui, text_edit::TextEditState, text_selection::CCursorRange,
+    };
 
     /// A [`TextBuffer`] that records how many chars were inserted and deleted.
     #[derive(Default)]
@@ -1652,7 +1780,7 @@ mod tests {
             text: before.to_owned(),
             ..Default::default()
         };
-        apply_text_diff(&mut buffer, after);
+        apply_text_diff(&mut buffer, after, usize::MAX);
         assert_eq!(buffer.text, after);
         buffer
     }
@@ -1675,5 +1803,292 @@ mod tests {
 
         let unchanged = diff("same", "same");
         assert_eq!((unchanged.inserted, unchanged.deleted), (0, 0));
+    }
+
+    /// A [`TextBuffer`] that silently refuses to insert digits, like a numbers-only field in
+    /// reverse: its `insert_text` inserts fewer chars than it was given.
+    #[derive(Default)]
+    struct NoDigitsBuffer(String);
+
+    impl TextBuffer for NoDigitsBuffer {
+        fn is_mutable(&self) -> bool {
+            true
+        }
+
+        fn as_str(&self) -> &str {
+            &self.0
+        }
+
+        fn insert_text(&mut self, text: &str, char_index: CharIndex) -> usize {
+            let kept: String = text.chars().filter(|c| !c.is_ascii_digit()).collect();
+            self.0.insert_text(&kept, char_index)
+        }
+
+        fn delete_char_range(&mut self, char_range: Range<CharIndex>) {
+            self.0.delete_char_range(char_range);
+        }
+
+        fn type_id(&self) -> core::any::TypeId {
+            core::any::TypeId::of::<Self>()
+        }
+    }
+
+    /// The rest of a diff lands where the buffer actually put the text, not where the diff
+    /// assumed it would.
+    #[test]
+    fn apply_text_diff_follows_what_the_buffer_inserted() {
+        let mut buffer = NoDigitsBuffer("ab".to_owned());
+        apply_text_diff(&mut buffer, "a1b2c", usize::MAX);
+        assert_eq!(buffer.0, "abc");
+    }
+
+    #[test]
+    fn apply_text_diff_honours_the_char_limit() {
+        let mut buffer = String::from("abc");
+        apply_text_diff(&mut buffer, "abcdefgh", 5);
+        assert_eq!(buffer, "abcde");
+
+        // Deletions free up room for the insertions that replace them.
+        let mut buffer = String::from("abcde");
+        apply_text_diff(&mut buffer, "xyzde", 5);
+        assert_eq!(buffer, "xyzde");
+    }
+
+    // ------------------------------------------------------------------------
+    // Soft keyboard sync. `TextEdit` only tracks the keyboard on Android and in these tests.
+
+    fn keyboard(text: &str, start: usize, end: usize) -> Event {
+        Event::TextInputState(TextInputState {
+            text: text.to_owned(),
+            selection: TextSpan { start, end },
+            compose_region: None,
+        })
+    }
+
+    /// What a pass sends the keyboard for `text` with `start..end` selected.
+    fn sent(text: &str, start: usize, end: usize) -> TextInputState {
+        let selection = TextSpan { start, end };
+        TextInputState {
+            text: text.to_owned(),
+            selection,
+            compose_region: (start != end).then_some(selection),
+        }
+    }
+
+    fn key(key: Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    /// Runs one pass and returns what it sent the soft keyboard.
+    fn run(
+        ctx: &Context,
+        events: Vec<Event>,
+        ui_fn: impl FnMut(&mut Ui),
+    ) -> Option<TextInputState> {
+        let input = RawInput {
+            events,
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, ui_fn);
+        let sent = output.platform_output.text_input_state.clone();
+        output.drop_without_applying_deltas();
+        sent
+    }
+
+    /// Draws a focused edit and returns whether the pass changed its text.
+    fn focused(ui: &mut Ui, id: Id, edit: TextEdit<'_>) -> bool {
+        ui.memory_mut(|mem| mem.request_focus(id));
+        ui.add(edit.id(id)).changed()
+    }
+
+    fn cursor(ctx: &Context, id: Id) -> CCursorRange {
+        TextEditState::load(ctx, id)
+            .and_then(|state| state.cursor.char_range())
+            .expect("the focused edit should have a cursor")
+    }
+
+    /// A focused single-line edit that has already sent the keyboard its text.
+    fn synced(text: &mut String) -> (Context, Id) {
+        let ctx = Context::default();
+        let id = Id::unique("soft_keyboard_edit");
+        let expected = text.clone();
+        let len = expected.chars().count();
+        let first = run(&ctx, vec![], |ui| {
+            focused(ui, id, TextEdit::singleline(text));
+        });
+        assert_eq!(first, Some(sent(&expected, len, len)));
+        (ctx, id)
+    }
+
+    /// The keyboard's first state after an edit gains focus is still the previous edit's text.
+    #[test]
+    fn keyboard_state_waits_until_the_keyboard_has_this_edit() {
+        let ctx = Context::default();
+        let id = Id::unique("soft_keyboard_edit");
+        let mut text = String::from("hello");
+
+        let out = run(&ctx, vec![keyboard("another edit", 12, 12)], |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text));
+        });
+
+        assert_eq!(text, "hello");
+        assert_eq!(out, Some(sent("hello", 5, 5)));
+    }
+
+    /// An edit hidden while focused loses focus without being drawn, and here gets it back
+    /// before it is drawn again. It must not trust what it last sent the keyboard.
+    #[test]
+    fn refocusing_a_hidden_edit_resends_its_text() {
+        let mut text = String::from("mine");
+        let (ctx, id) = synced(&mut text);
+
+        // Hidden: the focus dead-man's switch drops the focus at the end of this pass.
+        run(&ctx, vec![], |_ui| {});
+        assert!(!ctx.memory(|mem| mem.has_focus(id)));
+
+        // Focus requested while still hidden, e.g. by the code that is about to show it.
+        run(&ctx, vec![], |ui| {
+            ui.memory_mut(|mem| mem.request_focus(id));
+        });
+
+        // Shown again, while the keyboard still holds whatever edit it showed in between.
+        let out = run(&ctx, vec![keyboard("yours", 5, 5)], |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text));
+        });
+
+        assert_eq!(text, "mine");
+        assert_eq!(out, Some(sent("mine", 4, 4)));
+    }
+
+    /// Keyboard edits are not echoed back; every other kind of edit is sent to the keyboard.
+    #[test]
+    fn edits_that_bypass_the_keyboard_are_sent_to_it() {
+        let mut text = String::from("hello");
+        let (ctx, id) = synced(&mut text);
+        let pass = |events: Vec<Event>, text: &mut String| {
+            run(&ctx, events, |ui| {
+                focused(ui, id, TextEdit::singleline(text));
+            })
+        };
+
+        assert_eq!(pass(vec![keyboard("hello!", 6, 6)], &mut text), None);
+        assert_eq!(text, "hello!");
+
+        assert_eq!(
+            pass(vec![Event::Text("?".to_owned())], &mut text),
+            Some(sent("hello!?", 7, 7))
+        );
+        assert_eq!(
+            pass(vec![key(Key::Backspace)], &mut text),
+            Some(sent("hello!", 6, 6))
+        );
+        assert_eq!(
+            pass(vec![Event::Paste(" you".to_owned())], &mut text),
+            Some(sent("hello! you", 10, 10))
+        );
+
+        // The app edits the text between passes, e.g. clearing it after sending a message.
+        text.clear();
+        assert_eq!(pass(vec![], &mut text), Some(sent("", 0, 0)));
+        assert_eq!(pass(vec![], &mut text), None);
+    }
+
+    /// Selections go to the keyboard too, always with `start <= end`.
+    #[test]
+    fn a_backward_selection_is_sent_forward() {
+        let mut text = String::from("hello");
+        let (ctx, id) = synced(&mut text);
+
+        let mut state = TextEditState::load(&ctx, id).expect("state");
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::two(CCursor::new(4), CCursor::new(1))));
+        state.store(&ctx, id);
+
+        let out = run(&ctx, vec![], |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text));
+        });
+        assert_eq!(out, Some(sent("hello", 1, 4)));
+    }
+
+    #[test]
+    fn keyboard_state_honours_the_char_limit() {
+        let mut text = String::from("abc");
+        let (ctx, id) = synced(&mut text);
+
+        let out = run(&ctx, vec![keyboard("abcdefgh", 8, 8)], |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text).char_limit(5));
+        });
+
+        assert_eq!(text, "abcde");
+        // The keyboard is told what was actually kept.
+        assert_eq!(out, Some(sent("abcde", 5, 5)));
+    }
+
+    #[test]
+    fn keyboard_newlines_are_stripped_from_single_line_edits() {
+        let mut text = String::from("ab");
+        let (ctx, id) = synced(&mut text);
+
+        let out = run(&ctx, vec![keyboard("ab\ncd", 5, 5)], |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text));
+        });
+
+        assert_eq!(text, "abcd");
+        assert_eq!(out, Some(sent("abcd", 4, 4)));
+    }
+
+    #[test]
+    fn keyboard_newlines_are_kept_in_multiline_edits() {
+        let ctx = Context::default();
+        let id = Id::unique("soft_keyboard_multiline");
+        let mut text = String::from("ab");
+        let pass = |events: Vec<Event>, text: &mut String| {
+            run(&ctx, events, |ui| {
+                focused(ui, id, TextEdit::multiline(text));
+            })
+        };
+        pass(vec![], &mut text);
+
+        assert_eq!(pass(vec![keyboard("ab\ncd", 5, 5)], &mut text), None);
+        assert_eq!(text, "ab\ncd");
+    }
+
+    /// A keyboard state that only moves the selection moves the cursor, and is not a text change.
+    #[test]
+    fn keyboard_selection_only_update_moves_the_cursor() {
+        let mut text = String::from("hello");
+        let (ctx, id) = synced(&mut text);
+
+        let mut changed = false;
+        let out = run(&ctx, vec![keyboard("hello", 1, 3)], |ui| {
+            changed = focused(ui, id, TextEdit::singleline(&mut text));
+        });
+
+        assert!(!changed);
+        assert_eq!(out, None);
+        assert_eq!(
+            cursor(&ctx, id),
+            CCursorRange::two(CCursor::new(1), CCursor::new(3))
+        );
+    }
+
+    #[test]
+    fn keyboard_selection_is_clamped_to_the_text() {
+        let mut text = String::from("hello");
+        let (ctx, id) = synced(&mut text);
+
+        run(&ctx, vec![keyboard("hello world", 50, 60)], |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text));
+        });
+
+        assert_eq!(text, "hello world");
+        assert_eq!(cursor(&ctx, id), CCursorRange::one(CCursor::new(11)));
     }
 }
