@@ -185,4 +185,10 @@ pub enum Event {
 
     /// An assistive technology (e.g. screen reader) requested an action.
     AccessKitActionRequest(accesskit::ActionRequest),
+
+    /// Something covering the window changed, e.g. the soft keyboard or a system bar.
+    ///
+    /// Only sent on Android with the game-activity backend at the moment. Query the new insets
+    /// from the platform (e.g. `AndroidApp::get_window_insets`).
+    InsetsChanged,
 }

@@ -542,11 +542,18 @@ impl State {
             WindowEvent::ActivationTokenDone { .. }
             | WindowEvent::AxisMotion { .. }
             | WindowEvent::DoubleTapGesture { .. }
-            | WindowEvent::TextInputState(_)
-            | WindowEvent::InsetsChanged => EventResponse {
+            | WindowEvent::TextInputState(_) => EventResponse {
                 repaint: false,
                 consumed: false,
             },
+
+            WindowEvent::InsetsChanged => {
+                self.egui_input.events.push(egui::Event::InsetsChanged);
+                EventResponse {
+                    repaint: true,
+                    consumed: false,
+                }
+            }
 
             WindowEvent::PinchGesture { delta, .. } => {
                 // Positive delta values indicate magnification (zooming in).
