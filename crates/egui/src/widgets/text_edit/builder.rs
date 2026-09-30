@@ -939,35 +939,41 @@ impl<'t> TextEdit<'t> {
         let should_paint_ime_visuals_the_legacy_way = ui.visuals().ime_composition.legacy_visuals;
 
         let has_focus = ui.memory(|mem| mem.has_focus(id));
+        let is_visible = ui.is_rect_visible(inner_rect);
 
-        // Keep a focused edit in view when the content rect changes, e.g. when the window
-        // shrinks to make room for a mobile soft keyboard.
-        if has_focus && ui.input(|i| i.content_rect_changed()) {
-            ui.scroll_to_rect(response.rect, None);
-        }
+        // A focused edit scrolled out of view is not painted, but must keep emitting
+        // `PlatformOutput::ime`: otherwise the integration drops the IME (and hides a mobile soft
+        // keyboard).
+        if is_visible || has_focus {
+            if is_visible {
+                if has_focus
+                    && (state.cursor_purpose.is_selection()
+                        || should_paint_ime_visuals_the_legacy_way)
+                    && let Some(cursor_range) = state.cursor.range(&galley)
+                {
+                    // Add text selection rectangles to the galley:
+                    paint_text_selection(&mut galley, ui.visuals(), &cursor_range, None);
+                }
 
-        // A focused edit must keep emitting `PlatformOutput::ime` even while it is scrolled out
-        // of view, otherwise the integration drops the IME (and hides a mobile soft keyboard).
-        if ui.is_rect_visible(inner_rect) || has_focus {
-            if has_focus
-                && (state.cursor_purpose.is_selection() || should_paint_ime_visuals_the_legacy_way)
-                && let Some(cursor_range) = state.cursor.range(&galley)
-            {
-                // Add text selection rectangles to the galley:
-                paint_text_selection(&mut galley, ui.visuals(), &cursor_range, None);
+                painter.galley(
+                    galley_pos - vec2(galley.rect.left(), 0.0),
+                    Arc::clone(&galley),
+                    text_color,
+                );
             }
-
-            painter.galley(
-                galley_pos - vec2(galley.rect.left(), 0.0),
-                Arc::clone(&galley),
-                text_color,
-            );
 
             if has_focus && let Some(cursor_range) = state.cursor.range(&galley) {
                 let primary_cursor_rect = cursor_rect(&galley, &cursor_range.primary, row_height)
                     .translate(galley_pos.to_vec2() - vec2(galley.rect.left(), 0.0));
 
-                if response.changed() || selection_changed {
+                // A mobile soft keyboard shrinks the content rect when it is shown. Bring the
+                // cursor back into view, not the top of the edit: in a tall multiline edit that
+                // could leave the cursor under the keyboard. Not on desktop, where the content
+                // rect changes on every pass of a window-resize drag.
+                let content_rect_changed = cfg!(any(target_os = "android", test))
+                    && ui.input(|i| i.content_rect_changed());
+
+                if response.changed() || selection_changed || content_rect_changed {
                     // Scroll to keep primary cursor in view:
                     ui.scroll_to_rect(primary_cursor_rect, None);
                 }
@@ -998,12 +1004,12 @@ impl<'t> TextEdit<'t> {
                         state.last_interaction_time = now;
                     }
 
-                    // Only show (and blink) cursor if the egui viewport has focus.
-                    // This is for two reasons:
+                    // Only show (and blink) cursor if the edit is visible and the egui viewport
+                    // has focus. This is for two reasons:
                     // * Don't give the impression that the user can type into a window without focus
-                    // * Don't repaint the ui because of a blinking cursor in an app that is not in focus
+                    // * Don't repaint the ui because of a blinking cursor nobody can see
                     let viewport_has_focus = ui.input(|i| i.focused);
-                    if viewport_has_focus {
+                    if is_visible && viewport_has_focus {
                         let time_since_last_interaction = now - state.last_interaction_time;
                         let cursor_purpose = if should_paint_ime_visuals_the_legacy_way {
                             &TextEditCursorPurpose::Selection
@@ -1037,7 +1043,8 @@ impl<'t> TextEdit<'t> {
                         }
                     }
                     if ui.memory(|mem| mem.owns_ime_events(id)) {
-                        // Set IME output (in screen coords) when text is editable and visible
+                        // Set IME output (in screen coords) when text is editable, even while it
+                        // is scrolled out of view
                         let to_global = ui
                             .ctx()
                             .layer_transform_to_global(ui.layer_id())
@@ -1827,15 +1834,15 @@ fn check_for_mutating_key_press(
 
 #[cfg(test)]
 mod tests {
-    use core::ops::Range;
+    use core::{ops::Range, time::Duration};
 
     use epaint::text::{CharIndex, cursor::CCursor};
 
     use super::apply_text_diff;
     use crate::{
-        Context, Event, Id, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, TextBuffer,
-        TextEdit, TextInputState, TextSpan, Ui, text_edit::TextEditState,
-        text_selection::CCursorRange,
+        Context, Event, FullOutput, IMEPurpose, Id, Key, Modifiers, PointerButton, Pos2, RawInput,
+        Rect, ScrollArea, Shape, TextBuffer, TextEdit, TextInputState, TextSpan, Ui, Vec2,
+        ViewportId, text_edit::TextEditState, text_selection::CCursorRange,
     };
 
     /// A [`TextBuffer`] that records how many chars were inserted and deleted.
@@ -2467,5 +2474,165 @@ mod tests {
         assert_eq!(text, "hello world");
         assert_eq!(cursor(&ctx, id), CCursorRange::one(CCursor::new(11)));
         assert_eq!(out, Some(sent("hello world", 11, 11)));
+    }
+
+    /// Draws a focused edit below a 1000pt spacer in a 100pt tall scroll area, so it is out of
+    /// view.
+    fn below_the_fold(ui: &mut Ui, id: Id, edit: TextEdit<'_>) {
+        ScrollArea::vertical().max_height(100.0).show(ui, |ui| {
+            ui.add_space(1000.0);
+            focused(ui, id, edit);
+        });
+    }
+
+    /// Whether a pass painted any text.
+    fn painted_text(output: &FullOutput) -> bool {
+        output
+            .shapes
+            .iter()
+            .any(|clipped| matches!(clipped.shape, Shape::Text(_)))
+    }
+
+    /// Runs one pass at `time` seconds. Animations such as a scroll bar's fade only settle, and
+    /// stop asking for repaints, while time moves on.
+    fn run_at(ctx: &Context, time: f64, ui_fn: impl FnMut(&mut Ui)) -> FullOutput {
+        let input = RawInput {
+            time: Some(time),
+            ..Default::default()
+        };
+        ctx.run_ui(input, ui_fn)
+    }
+
+    /// A focused edit scrolled out of view keeps the IME, and its keyboard in sync, but is not
+    /// painted and does not blink its cursor: nobody can see it, so it must not repaint.
+    #[test]
+    fn a_focused_edit_scrolled_out_of_view_keeps_the_ime_without_repainting() {
+        let ctx = Context::default();
+        let id = Id::unique("off_screen_edit");
+        let mut text = String::from("hello");
+
+        let first = run(&ctx, vec![], |ui| {
+            below_the_fold(ui, id, TextEdit::singleline(&mut text));
+        });
+        assert_eq!(
+            first,
+            Some(sent("hello", 5, 5)),
+            "the keyboard is synced while out of view"
+        );
+
+        for time in 1..3 {
+            run_at(&ctx, time as f64, |ui| {
+                below_the_fold(ui, id, TextEdit::singleline(&mut text));
+            })
+            .drop_without_applying_deltas();
+        }
+
+        let idle = run_at(&ctx, 3.0, |ui| {
+            below_the_fold(ui, id, TextEdit::singleline(&mut text));
+        });
+        let ime = idle
+            .platform_output
+            .ime
+            .expect("an edit out of view keeps the IME");
+        assert!(ime.rect.min.y >= 1000.0, "{:?}", ime.rect);
+        assert!(!painted_text(&idle));
+        assert_eq!(
+            idle.viewport_output[&ViewportId::ROOT].repaint_delay,
+            Duration::MAX
+        );
+        idle.drop_without_applying_deltas();
+
+        // The same edit in view does blink, so the check above would catch it.
+        let visible = run_at(&ctx, 4.0, |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text));
+        });
+        assert!(painted_text(&visible));
+        assert!(visible.viewport_output[&ViewportId::ROOT].repaint_delay < Duration::MAX);
+        visible.drop_without_applying_deltas();
+    }
+
+    /// The IME is told what kind of text the edit takes, so a soft keyboard can offer a
+    /// newline key or hide what is typed.
+    #[test]
+    fn the_ime_purpose_follows_the_kind_of_edit() {
+        let purpose = |edit: fn(&mut String) -> TextEdit<'_>| {
+            let ctx = Context::default();
+            let id = Id::unique("ime_purpose_edit");
+            let mut text = String::from("hello");
+            let mut last = None;
+            for _ in 0..2 {
+                let output = ctx.run_ui(RawInput::default(), |ui| {
+                    focused(ui, id, edit(&mut text));
+                });
+                last = output.platform_output.ime.map(|ime| ime.purpose);
+                output.drop_without_applying_deltas();
+            }
+            last
+        };
+
+        assert_eq!(
+            purpose(|text| TextEdit::multiline(text)),
+            Some(IMEPurpose::Multiline)
+        );
+        assert_eq!(
+            purpose(|text| TextEdit::singleline(text)),
+            Some(IMEPurpose::Normal)
+        );
+        assert_eq!(
+            purpose(|text| TextEdit::singleline(text).password(true)),
+            Some(IMEPurpose::Password)
+        );
+    }
+
+    /// When a soft keyboard shrinks the content rect, the cursor is scrolled back into view.
+    /// Not the top of the edit: in a tall multiline edit that would leave the cursor, at the
+    /// end here, where it was.
+    #[test]
+    fn a_shrunk_content_rect_scrolls_the_cursor_into_view() {
+        let ctx = Context::default();
+        let id = Id::unique("tall_edit");
+        let mut text = "line\n".repeat(50);
+        let mut pass = |screen_rect: Option<Rect>| {
+            let mut offset = 0.0;
+            let mut cursor_y = 0.0;
+            let output = ctx.run_ui(
+                RawInput {
+                    screen_rect,
+                    ..Default::default()
+                },
+                |ui| {
+                    let scroll = ScrollArea::vertical()
+                        .max_height(200.0)
+                        .animated(false)
+                        .show(ui, |ui| {
+                            focused(ui, id, TextEdit::multiline(&mut text));
+                        });
+                    offset = scroll.state.offset.y;
+                    cursor_y = scroll.inner_rect.min.y;
+                },
+            );
+            let ime = output.platform_output.ime.expect("the edit has the IME");
+            output.drop_without_applying_deltas();
+            (offset, ime.cursor_rect.min.y - cursor_y)
+        };
+
+        pass(None);
+        let (offset, cursor_y) = pass(None);
+        assert_eq!(offset, 0.0);
+        assert!(
+            cursor_y > 200.0,
+            "the cursor starts out of view: {cursor_y}"
+        );
+
+        pass(Some(Rect::from_min_size(
+            Pos2::ZERO,
+            Vec2::new(800.0, 400.0),
+        )));
+        let (offset, cursor_y) = pass(None);
+        assert!(offset > 0.0);
+        assert!(
+            (0.0..200.0).contains(&cursor_y),
+            "the cursor is back in view: {cursor_y}"
+        );
     }
 }
