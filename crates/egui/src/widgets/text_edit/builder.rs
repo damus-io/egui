@@ -631,6 +631,11 @@ impl<'t> TextEdit<'t> {
             state.soft_keyboard = None;
         }
 
+        #[cfg(any(target_os = "android", test))]
+        if text.is_mutable() {
+            send_app_edit_to_soft_keyboard(ui.ctx(), &mut state, text);
+        }
+
         if !owns_ime_events {
             state.cursor_purpose = TextEditCursorPurpose::Selection;
             if !state.cursor.is_empty() {
@@ -1664,6 +1669,31 @@ fn take_soft_keyboard_state(
     true
 }
 
+/// Send the soft keyboard an edit the app made to the text since the last pass, before this pass
+/// reads the keyboard's states.
+///
+/// Every state the keyboard sends in this pass was made before it could have seen that edit
+/// (e.g. the text cleared after sending, or a mention inserted), yet carries the version of the
+/// last state this edit sent. Applied, the first of them would undo the edit, and the end of the
+/// pass would then have nothing left to send. Sent here, the edit gets this pass's version, so
+/// those states are stale.
+#[cfg(any(target_os = "android", test))]
+fn send_app_edit_to_soft_keyboard(ctx: &Context, state: &mut TextEditState, text: &dyn TextBuffer) {
+    let Some(copy) = state.soft_keyboard else {
+        return;
+    };
+    let Some(cursor_range) = state.cursor.char_range() else {
+        return;
+    };
+    if copy.text_hash == epaint::util::hash(text.as_str()) {
+        return;
+    }
+
+    // The app may have shortened the text under the stored cursor.
+    let cursor_range = keyboard_cursor_range(sorted_text_span(&cursor_range), text);
+    sync_soft_keyboard(ctx, state, cursor_range, text.as_str(), false);
+}
+
 /// Send the soft keyboard this edit's text and selection if its copy is out of date.
 ///
 /// That is when the edit first owns the IME, and whenever the text or selection changed through
@@ -2117,9 +2147,10 @@ mod tests {
     }
 
     /// The user types while an app edit is on its way to the keyboard: the composer is cleared
-    /// after sending, and the keyboard reports "hello!" before it has been given the "". That
-    /// state is stale and must not bring the message back. Only states the keyboard makes once
-    /// it has the "" are applied.
+    /// after sending, and the keyboard reports "hello!" before it has been given the "". Those
+    /// states are stale and must not bring the message back, including one that arrives in the
+    /// same pass the edit is first sent. Only states the keyboard makes once it has the "" are
+    /// applied.
     #[test]
     fn a_stale_keyboard_state_does_not_undo_an_app_edit() {
         let ctx = Context::default();
@@ -2137,14 +2168,17 @@ mod tests {
             "0 is what a keyboard with no state reports"
         );
 
-        // The app clears the text between passes.
+        // The app clears the text between passes, and the very next pass already brings a state
+        // the keyboard made before it could have seen that: the user typed "!" into "hello".
         text.clear();
-        let cleared = pass(vec![], &mut text).expect("the app edit is sent");
+        let cleared = pass(vec![keyboard_at(hello.version, "hello!", 6, 6)], &mut text)
+            .expect("the app edit is sent");
+        assert_eq!(text, "");
         assert_eq!((cleared.text.as_str(), cleared.selection.end), ("", 0));
         assert!(cleared.version > hello.version);
 
-        // The keyboard typed "!" into "hello" before it was given "".
-        let out = pass(vec![keyboard_at(hello.version, "hello!", 6, 6)], &mut text);
+        // More of the keyboard's typing from before it was given "".
+        let out = pass(vec![keyboard_at(hello.version, "hello!!", 7, 7)], &mut text);
         assert_eq!(text, "");
         assert_eq!(
             out, None,
