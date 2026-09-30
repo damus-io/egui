@@ -86,7 +86,11 @@ impl StyleProvider<ButtonStyle> for DefaultStyle {
             painted_frame
         };
 
-        let text_style = TextVisuals::from_widget_visuals(style, TextStyle::Body, &widget_visuals);
+        // `TextStyle::Button`, as `Button::new`'s fallback font says and as
+        // buttons were sized before the theme: an app that sizes it apart from
+        // `Body` must see its buttons use it.
+        let text_style =
+            TextVisuals::from_widget_visuals(style, TextStyle::Button, &widget_visuals);
         let image_tint = if classes.has_class(&Button::CLASS_IMAGE_TINT_FOLLOWS_TEXT_COLOR) {
             text_style.color
         } else {
@@ -180,9 +184,10 @@ impl StyleProvider<CheckboxStyle> for DefaultStyle {
                 min_size: Vec2::splat(spacing.interact_size.y),
                 gap: spacing.icon_spacing,
                 frame: Frame::new(),
+                // Checkbox and radio labels used `TextStyle::Button` too.
                 text_style: TextVisuals::from_widget_visuals(
                     style,
-                    TextStyle::Body,
+                    TextStyle::Button,
                     &widget_visuals,
                 ),
                 ..Default::default()
