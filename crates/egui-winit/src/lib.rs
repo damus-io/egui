@@ -2046,32 +2046,67 @@ fn process_viewport_command(
     }
 }
 
+/// Converts the soft keyboard's state to egui's.
+///
+/// The Android soft keyboard counts its selection and compose region in UTF-16 code units, as
+/// Java strings do, while [`egui::TextSpan`] counts chars, so every index is converted.
 fn to_egui_text_input_state(state: &winit::event::TextInputState) -> egui::TextInputState {
+    let text = &state.text;
+    let to_chars = |utf16_index| utf16_to_char_index(text, utf16_index);
     egui::TextInputState {
-        text: state.text.clone(),
+        text: text.clone(),
         selection: egui::TextSpan {
-            start: state.selection.start.unwrap_or(0),
-            end: state.selection.end.unwrap_or(0),
+            start: to_chars(state.selection.start.unwrap_or(0)),
+            end: to_chars(state.selection.end.unwrap_or(0)),
         },
         compose_region: state.compose_region.start.map(|start| egui::TextSpan {
-            start,
-            end: state.compose_region.end.unwrap_or(start),
+            start: to_chars(start),
+            end: to_chars(state.compose_region.end.unwrap_or(start)),
         }),
     }
 }
 
+/// Converts egui's soft keyboard state to the keyboard's: the inverse of
+/// [`to_egui_text_input_state`], turning char indices back into UTF-16 code units.
 fn to_winit_text_input_state(state: egui::TextInputState) -> winit::event::TextInputState {
+    let text = &state.text;
+    let to_utf16 = |char_index| char_to_utf16_index(text, char_index);
+    let selection = winit::event::TextSpan {
+        start: Some(to_utf16(state.selection.start)),
+        end: Some(to_utf16(state.selection.end)),
+    };
+    let compose_region = winit::event::TextSpan {
+        start: state.compose_region.map(|span| to_utf16(span.start)),
+        end: state.compose_region.map(|span| to_utf16(span.end)),
+    };
     winit::event::TextInputState {
         text: state.text,
-        selection: winit::event::TextSpan {
-            start: Some(state.selection.start),
-            end: Some(state.selection.end),
-        },
-        compose_region: winit::event::TextSpan {
-            start: state.compose_region.map(|span| span.start),
-            end: state.compose_region.map(|span| span.end),
-        },
+        selection,
+        compose_region,
     }
+}
+
+/// The char index in `text` of the UTF-16 code unit index `utf16_index`.
+///
+/// An index inside a surrogate pair rounds down to the start of its char, and an index past
+/// the end of `text` clamps to its char count.
+fn utf16_to_char_index(text: &str, utf16_index: usize) -> usize {
+    let mut utf16_end = 0;
+    let mut char_index = 0;
+    for c in text.chars() {
+        utf16_end += c.len_utf16();
+        if utf16_end > utf16_index {
+            break;
+        }
+        char_index += 1;
+    }
+    char_index
+}
+
+/// The UTF-16 code unit index in `text` of the char index `char_index`, clamped to the end of
+/// `text`.
+fn char_to_utf16_index(text: &str, char_index: usize) -> usize {
+    text.chars().take(char_index).map(char::len_utf16).sum()
 }
 
 fn to_winit_ime_purpose(purpose: egui::IMEPurpose) -> winit::window::ImePurpose {
@@ -2456,5 +2491,64 @@ pub fn short_window_event_description(event: &winit::event::WindowEvent) -> &'st
         WindowEvent::ThemeChanged { .. } => "WindowEvent::ThemeChanged",
         WindowEvent::Occluded { .. } => "WindowEvent::Occluded",
         WindowEvent::PanGesture { .. } => "WindowEvent::PanGesture",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        char_to_utf16_index, to_egui_text_input_state, to_winit_text_input_state,
+        utf16_to_char_index,
+    };
+
+    /// "a", a smiley (one char, a two-unit surrogate pair in UTF-16), then "b".
+    const EMOJI_TEXT: &str = "a\u{1F600}b";
+
+    #[test]
+    fn utf16_index_to_char_index() {
+        assert_eq!(utf16_to_char_index(EMOJI_TEXT, 0), 0);
+        assert_eq!(utf16_to_char_index(EMOJI_TEXT, 1), 1);
+        // Inside the surrogate pair: rounds down to the start of the smiley.
+        assert_eq!(utf16_to_char_index(EMOJI_TEXT, 2), 1);
+        assert_eq!(utf16_to_char_index(EMOJI_TEXT, 3), 2);
+        assert_eq!(utf16_to_char_index(EMOJI_TEXT, 4), 3);
+        // Past the end: clamps to the char count.
+        assert_eq!(utf16_to_char_index(EMOJI_TEXT, 9), 3);
+        assert_eq!(utf16_to_char_index("", 1), 0);
+    }
+
+    #[test]
+    fn char_index_to_utf16_index() {
+        assert_eq!(char_to_utf16_index(EMOJI_TEXT, 0), 0);
+        assert_eq!(char_to_utf16_index(EMOJI_TEXT, 1), 1);
+        assert_eq!(char_to_utf16_index(EMOJI_TEXT, 2), 3);
+        assert_eq!(char_to_utf16_index(EMOJI_TEXT, 3), 4);
+        assert_eq!(char_to_utf16_index(EMOJI_TEXT, 9), 4);
+    }
+
+    #[test]
+    fn keyboard_state_after_an_emoji_round_trips() {
+        // What the keyboard reports after typing "a", a smiley, "b", with "b" still composing
+        // and the cursor at the end: UTF-16 indices 3..4 and 4.
+        let keyboard = winit::event::TextInputState {
+            text: EMOJI_TEXT.to_owned(),
+            selection: winit::event::TextSpan {
+                start: Some(4),
+                end: Some(4),
+            },
+            compose_region: winit::event::TextSpan {
+                start: Some(3),
+                end: Some(4),
+            },
+        };
+
+        let egui_state = to_egui_text_input_state(&keyboard);
+        assert_eq!(egui_state.selection, egui::TextSpan { start: 3, end: 3 });
+        assert_eq!(
+            egui_state.compose_region,
+            Some(egui::TextSpan { start: 2, end: 3 })
+        );
+
+        assert_eq!(to_winit_text_input_state(egui_state), keyboard);
     }
 }

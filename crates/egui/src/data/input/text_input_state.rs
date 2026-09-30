@@ -1,4 +1,9 @@
-/// A span within a region of text, from `start` (inclusive) to `end` (exclusive), in chars.
+/// A span within a region of text, from `start` (inclusive) to `end` (exclusive).
+///
+/// Both indices count chars (Unicode scalar values), like [`crate::text::CCursor`], not bytes
+/// or UTF-16 code units. A platform whose soft keyboard counts differently converts at the
+/// integration boundary: Android's counts UTF-16 code units, as Java strings do, and
+/// `egui-winit` converts them.
 ///
 /// An empty span or cursor position is specified with `start == end`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
