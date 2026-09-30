@@ -56,6 +56,11 @@ pub struct TextEditState {
     /// Used to pause the cursor animation when typing.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) last_interaction_time: f64,
+
+    /// Has the soft keyboard been sent this edit's text since the edit last gained IME ownership?
+    #[cfg(target_os = "android")]
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) soft_keyboard_synced: bool,
 }
 
 impl TextEditState {

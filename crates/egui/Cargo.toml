@@ -96,6 +96,7 @@ itertools.workspace = true
 log.workspace = true
 nohash-hasher.workspace = true
 profiling.workspace = true
+similar.workspace = true
 smallvec.workspace = true
 unicode-segmentation.workspace = true
 

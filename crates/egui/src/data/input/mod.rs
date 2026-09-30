@@ -12,6 +12,7 @@ mod mouse_wheel_unit;
 mod pointer_button;
 mod raw_input;
 mod safe_area_insets;
+mod text_input_state;
 mod touch;
 mod viewport_info;
 
@@ -28,6 +29,7 @@ pub use self::{
     pointer_button::{NUM_POINTER_BUTTONS, PointerButton},
     raw_input::RawInput,
     safe_area_insets::SafeAreaInsets,
+    text_input_state::{TextInputState, TextSpan},
     touch::{TouchDeviceId, TouchId, TouchPhase},
     viewport_info::{ViewportEvent, ViewportInfo},
 };

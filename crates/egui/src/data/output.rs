@@ -4,7 +4,7 @@ use core::ops::Range;
 
 use epaint::text::CharIndex;
 
-use crate::{OrderedViewportIdMap, RepaintCause, Role, ViewportOutput};
+use crate::{OrderedViewportIdMap, RepaintCause, Role, TextInputState, ViewportOutput};
 
 /// What egui emits each frame from [`crate::Context::run_ui`].
 ///
@@ -190,6 +190,12 @@ pub struct PlatformOutput {
     /// If empty, there was never any calls.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub request_discard_reasons: Vec<RepaintCause>,
+
+    /// The text, selection and composing region to send to the mobile soft keyboard.
+    ///
+    /// Set by a focused [`crate::TextEdit`] on Android when the keyboard's copy of the text
+    /// needs to catch up, e.g. when the edit gains focus or the user moves the cursor.
+    pub text_input_state: Option<TextInputState>,
 }
 
 impl PlatformOutput {
@@ -223,6 +229,7 @@ impl PlatformOutput {
             accesskit_update,
             num_completed_passes,
             mut request_discard_reasons,
+            text_input_state,
         } = newer;
 
         self.commands.append(&mut commands);
@@ -234,6 +241,9 @@ impl PlatformOutput {
         self.num_completed_passes += num_completed_passes;
         self.request_discard_reasons
             .append(&mut request_discard_reasons);
+        if text_input_state.is_some() {
+            self.text_input_state = text_input_state;
+        }
 
         // egui produces a complete AccessKit tree for each frame, so overwrite rather than append:
         self.accesskit_update = accesskit_update;

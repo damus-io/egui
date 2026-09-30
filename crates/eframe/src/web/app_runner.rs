@@ -394,6 +394,7 @@ impl AppRunner {
             accesskit_update: _,        // not currently implemented
             num_completed_passes: _,    // handled by `Context::run`
             request_discard_reasons: _, // handled by `Context::run`
+            text_input_state: _,        // Android soft keyboard only
         } = platform_output;
 
         for command in commands {

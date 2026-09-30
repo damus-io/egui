@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use emath::{Rect, TSTransform};
-use epaint::text::{Galley, LayoutJob, TextWrapMode, cursor::CCursor};
+use epaint::text::{CharIndex, Galley, LayoutJob, TextWrapMode, cursor::CCursor};
 
 use crate::{
     Align, Align2, AsIdSalt, AtomExt as _, AtomKind, Atoms, Color32, Context, CursorIcon, Event,
     EventFilter, FontSelection, Frame, IMEPurpose, Id, IdSalt, ImeEvent, IntoAtoms,
     IntoSizedResult, Key, KeyboardShortcut, Margin, Modifiers, NumExt as _, Response, Sense,
-    SizedAtomKind, TextBuffer, TextStyle, Ui, Vec2, Widget, WidgetAtom, WidgetInfo,
+    SizedAtomKind, TextBuffer, TextSpan, TextStyle, Ui, Vec2, Widget, WidgetAtom, WidgetInfo,
     WidgetWithState,
     class::{ClassName, Classes, HasClasses},
     epaint,
@@ -616,6 +616,10 @@ impl<'t> TextEdit<'t> {
 
         let owns_ime_events = ui.memory(|mem| mem.owns_ime_events(id));
         if !owns_ime_events {
+            #[cfg(target_os = "android")]
+            {
+                state.soft_keyboard_synced = false;
+            }
             state.cursor_purpose = TextEditCursorPurpose::Selection;
             if !state.cursor.is_empty() {
                 state.cursor.set_char_range(
@@ -865,6 +869,15 @@ impl<'t> TextEdit<'t> {
             }
         }
 
+        // The user placed the cursor or a selection with the pointer: tell the soft keyboard.
+        #[cfg(target_os = "android")]
+        if interactive
+            && state.soft_keyboard_synced
+            && (response.drag_stopped() || response.clicked())
+        {
+            update_text_input(ui.ctx(), state.cursor.range(&galley), text.as_str());
+        }
+
         if interactive && response.hovered() {
             ui.set_cursor_icon(CursorIcon::Text);
         }
@@ -917,9 +930,17 @@ impl<'t> TextEdit<'t> {
 
         let should_paint_ime_visuals_the_legacy_way = ui.visuals().ime_composition.legacy_visuals;
 
-        if ui.is_rect_visible(inner_rect) {
-            let has_focus = ui.memory(|mem| mem.has_focus(id));
+        let has_focus = ui.memory(|mem| mem.has_focus(id));
 
+        // Keep a focused edit in view when the content rect changes, e.g. when the window
+        // shrinks to make room for a mobile soft keyboard.
+        if has_focus && ui.input(|i| i.content_rect_changed()) {
+            ui.scroll_to_rect(response.rect, None);
+        }
+
+        // A focused edit must keep emitting `PlatformOutput::ime` even while it is scrolled out
+        // of view, otherwise the integration drops the IME (and hides a mobile soft keyboard).
+        if ui.is_rect_visible(inner_rect) || has_focus {
             if has_focus
                 && (state.cursor_purpose.is_selection() || should_paint_ime_visuals_the_legacy_way)
                 && let Some(cursor_range) = state.cursor.range(&galley)
@@ -944,6 +965,13 @@ impl<'t> TextEdit<'t> {
                 }
 
                 if text.is_mutable() && interactive {
+                    // Send the soft keyboard our text once, when it is first shown for this edit.
+                    #[cfg(target_os = "android")]
+                    if !state.soft_keyboard_synced && ui.memory(|mem| mem.owns_ime_events(id)) {
+                        update_text_input(ui.ctx(), Some(cursor_range), text.as_str());
+                        state.soft_keyboard_synced = true;
+                    }
+
                     let now = ui.input(|i| i.time);
                     if response.changed() || selection_changed {
                         state.last_interaction_time = now;
@@ -1398,6 +1426,21 @@ fn events(
                 }
             }
 
+            Event::TextInputState(input_state) if owns_ime_events => {
+                if input_state.text == text.as_str() {
+                    None
+                } else {
+                    apply_text_diff(text, &input_state.text);
+
+                    let TextSpan { start, end } = input_state.selection;
+                    Some(CursorMutation::Selection(if start == end {
+                        CCursorRange::one(CCursor::new(start))
+                    } else {
+                        CCursorRange::two(CCursor::new(start), CCursor::new(end))
+                    }))
+                }
+            }
+
             _ => None,
         };
 
@@ -1435,6 +1478,55 @@ fn events(
     );
 
     (any_change, cursor_range)
+}
+
+/// Turn `text` into `after` with the fewest char insertions and deletions.
+///
+/// Used for text coming from a mobile soft keyboard, which always sends the whole text. Editing
+/// in place instead of replacing the whole buffer keeps custom [`TextBuffer`]s (e.g. ones that
+/// track spans such as mentions) intact.
+fn apply_text_diff(text: &mut dyn TextBuffer, after: &str) {
+    let before = text.as_str().to_owned();
+    let diff = similar::TextDiff::from_chars(before.as_str(), after);
+
+    let mut cursor = 0;
+    for change in diff.iter_all_changes() {
+        let len = change.value().chars().count();
+        match change.tag() {
+            similar::ChangeTag::Delete => {
+                text.delete_char_range(CharIndex(cursor)..CharIndex(cursor + len));
+            }
+            similar::ChangeTag::Insert => {
+                text.insert_text(change.value(), CharIndex(cursor));
+                cursor += len;
+            }
+            similar::ChangeTag::Equal => {
+                cursor += len;
+            }
+        }
+    }
+}
+
+/// Send the soft keyboard this edit's text and selection.
+///
+/// A non-empty selection is also sent as the composing region, which is what the keyboard uses
+/// for suggestions.
+#[cfg(target_os = "android")]
+fn update_text_input(ctx: &Context, cursor_range: Option<CCursorRange>, text: &str) {
+    let selection = cursor_range.map_or(TextSpan { start: 0, end: 0 }, |range| TextSpan {
+        start: range.secondary.index.0,
+        end: range.primary.index.0,
+    });
+    let compose_region = (selection.start != selection.end).then_some(selection);
+
+    log::debug!("update egui->android TextInputState {selection:?}");
+    ctx.output_mut(|o| {
+        o.text_input_state = Some(crate::TextInputState {
+            text: text.to_owned(),
+            selection,
+            compose_region,
+        });
+    });
 }
 
 // ----------------------------------------------------------------------------
@@ -1510,5 +1602,78 @@ fn check_for_mutating_key_press(
         }
 
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::ops::Range;
+
+    use epaint::text::CharIndex;
+
+    use super::apply_text_diff;
+    use crate::TextBuffer;
+
+    /// A [`TextBuffer`] that records how many chars were inserted and deleted.
+    #[derive(Default)]
+    struct CountingBuffer {
+        text: String,
+        inserted: usize,
+        deleted: usize,
+    }
+
+    impl TextBuffer for CountingBuffer {
+        fn is_mutable(&self) -> bool {
+            true
+        }
+
+        fn as_str(&self) -> &str {
+            &self.text
+        }
+
+        fn insert_text(&mut self, text: &str, char_index: CharIndex) -> usize {
+            let n = self.text.insert_text(text, char_index);
+            self.inserted += n;
+            n
+        }
+
+        fn delete_char_range(&mut self, char_range: Range<CharIndex>) {
+            self.deleted += char_range.end.0 - char_range.start.0;
+            self.text.delete_char_range(char_range);
+        }
+
+        fn type_id(&self) -> core::any::TypeId {
+            core::any::TypeId::of::<Self>()
+        }
+    }
+
+    fn diff(before: &str, after: &str) -> CountingBuffer {
+        let mut buffer = CountingBuffer {
+            text: before.to_owned(),
+            ..Default::default()
+        };
+        apply_text_diff(&mut buffer, after);
+        assert_eq!(buffer.text, after);
+        buffer
+    }
+
+    /// Soft keyboard text is applied as an edit, not as a whole-buffer replacement, so a
+    /// buffer that tracks spans only sees the chars that actually changed.
+    #[test]
+    fn apply_text_diff_only_touches_changed_chars() {
+        let inserted = diff("hello world", "hello brave world");
+        assert_eq!((inserted.inserted, inserted.deleted), (6, 0));
+
+        let deleted = diff("hello brave world", "hello world");
+        assert_eq!((deleted.inserted, deleted.deleted), (0, 6));
+
+        let replaced = diff("hello world", "jello world");
+        assert_eq!((replaced.inserted, replaced.deleted), (1, 1));
+
+        let multibyte = diff("héllo 🌍", "héllo big 🌍!");
+        assert_eq!((multibyte.inserted, multibyte.deleted), (5, 0));
+
+        let unchanged = diff("same", "same");
+        assert_eq!((unchanged.inserted, unchanged.deleted), (0, 0));
     }
 }

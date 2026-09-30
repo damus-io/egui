@@ -541,11 +541,28 @@ impl State {
             // Things we completely ignore:
             WindowEvent::ActivationTokenDone { .. }
             | WindowEvent::AxisMotion { .. }
-            | WindowEvent::DoubleTapGesture { .. }
-            | WindowEvent::TextInputState(_) => EventResponse {
+            | WindowEvent::DoubleTapGesture { .. } => EventResponse {
                 repaint: false,
                 consumed: false,
             },
+
+            WindowEvent::TextInputState(state) => {
+                // Only the Android soft keyboard sends these.
+                if cfg!(target_os = "android") {
+                    self.egui_input
+                        .events
+                        .push(egui::Event::TextInputState(to_egui_text_input_state(state)));
+                    EventResponse {
+                        repaint: true,
+                        consumed: self.egui_ctx.egui_wants_keyboard_input(),
+                    }
+                } else {
+                    EventResponse {
+                        repaint: false,
+                        consumed: false,
+                    }
+                }
+            }
 
             WindowEvent::InsetsChanged => {
                 self.egui_input.events.push(egui::Event::InsetsChanged);
@@ -1152,6 +1169,7 @@ impl State {
             accesskit_update,
             num_completed_passes: _,    // `egui::Context::run` handles this
             request_discard_reasons: _, // `egui::Context::run` handles this
+            text_input_state,
             ..
         } = platform_output;
 
@@ -1170,6 +1188,20 @@ impl State {
         }
 
         self.apply_cursor(window, event_loop, cursor_icon, cursor_image.as_ref());
+
+        if let Some(text_input_state) = text_input_state {
+            window.set_text_input_state(to_winit_text_input_state(text_input_state));
+        }
+
+        // The Android soft keyboard reads its editor info (e.g. multiline) when it is shown,
+        // so set the purpose before `set_ime_allowed` shows it.
+        #[cfg(target_os = "android")]
+        if let Some(ime) = &ime
+            && ime.purpose != self.old_ime_purpose
+        {
+            self.old_ime_purpose = ime.purpose;
+            window.set_ime_purpose(to_winit_ime_purpose(ime.purpose));
+        }
 
         let allow_ime = ime.is_some();
         let is_toggling_ime = self.allow_ime != allow_ime;
@@ -1190,7 +1222,10 @@ impl State {
         }
 
         if let Some(ime) = ime {
-            if !is_toggling_ime && ime.should_interrupt_composition {
+            // On Android, toggling the IME hides and re-shows the soft keyboard, and the
+            // keyboard's composition is synced through `TextInputState` instead.
+            if !is_toggling_ime && ime.should_interrupt_composition && !cfg!(target_os = "android")
+            {
                 // TODO(umajho): use a more proper way to interrupt composition
                 // if `winit` provides one in the future.
 
@@ -2008,6 +2043,34 @@ fn process_viewport_command(
         ViewportCommand::RequestPaste => {
             actions_requested.push(ActionRequested::Paste);
         }
+    }
+}
+
+fn to_egui_text_input_state(state: &winit::event::TextInputState) -> egui::TextInputState {
+    egui::TextInputState {
+        text: state.text.clone(),
+        selection: egui::TextSpan {
+            start: state.selection.start.unwrap_or(0),
+            end: state.selection.end.unwrap_or(0),
+        },
+        compose_region: state.compose_region.start.map(|start| egui::TextSpan {
+            start,
+            end: state.compose_region.end.unwrap_or(start),
+        }),
+    }
+}
+
+fn to_winit_text_input_state(state: egui::TextInputState) -> winit::event::TextInputState {
+    winit::event::TextInputState {
+        text: state.text,
+        selection: winit::event::TextSpan {
+            start: Some(state.selection.start),
+            end: Some(state.selection.end),
+        },
+        compose_region: winit::event::TextSpan {
+            start: state.compose_region.map(|span| span.start),
+            end: state.compose_region.map(|span| span.end),
+        },
     }
 }
 

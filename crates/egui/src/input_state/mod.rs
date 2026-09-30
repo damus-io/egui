@@ -259,6 +259,9 @@ pub struct InputState {
     /// The safe area insets, subtracted from the `viewport_rect` in [`Self::content_rect`].
     safe_area_insets: SafeAreaInsets,
 
+    /// [`Self::content_rect`] as it was in the previous pass.
+    previous_content_rect: Rect,
+
     /// Also known as device pixel ratio, > 1 for high resolution screens.
     pub pixels_per_point: f32,
 
@@ -345,6 +348,10 @@ impl Default for InputState {
 
             viewport_rect: Rect::from_min_size(Default::default(), vec2(10_000.0, 10_000.0)),
             safe_area_insets: Default::default(),
+            previous_content_rect: Rect::from_min_size(
+                Default::default(),
+                vec2(10_000.0, 10_000.0),
+            ),
             pixels_per_point: 1.0,
             max_texture_side: 2048,
             time: 0.0,
@@ -382,6 +389,7 @@ impl InputState {
             new.predicted_dt
         };
 
+        let previous_content_rect = self.content_rect();
         let safe_area_insets = new.safe_area_insets.unwrap_or(self.safe_area_insets);
         let viewport_rect = new.screen_rect.unwrap_or(self.viewport_rect);
         self.create_touch_states_for_new_devices(&new.events);
@@ -478,6 +486,7 @@ impl InputState {
 
             viewport_rect,
             safe_area_insets,
+            previous_content_rect,
             pixels_per_point,
             max_texture_side: new.max_texture_side.unwrap_or(self.max_texture_side),
             time,
@@ -509,6 +518,14 @@ impl InputState {
     #[inline(always)]
     pub fn content_rect(&self) -> Rect {
         self.viewport_rect - self.safe_area_insets
+    }
+
+    /// Did [`Self::content_rect`] change since the previous pass?
+    ///
+    /// For example because the window was resized to make room for a mobile soft keyboard.
+    #[inline(always)]
+    pub fn content_rect_changed(&self) -> bool {
+        self.content_rect() != self.previous_content_rect
     }
 
     /// Returns the full area available to egui, including parts that might be partially covered,
@@ -1584,6 +1601,7 @@ impl InputState {
             zoom_factor_delta,
             viewport_rect,
             safe_area_insets,
+            previous_content_rect,
             pixels_per_point,
             max_texture_side,
             time,
@@ -1627,6 +1645,9 @@ impl InputState {
 
         ui.label(format!("viewport_rect: {viewport_rect:?} points"));
         ui.label(format!("safe_area_insets: {safe_area_insets:?} points"));
+        ui.label(format!(
+            "previous_content_rect: {previous_content_rect:?} points"
+        ));
         ui.label(format!(
             "{pixels_per_point} physical pixels for each logical point"
         ));
