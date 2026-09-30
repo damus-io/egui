@@ -11,6 +11,7 @@ fn keyboard_state(text: &str, cursor: usize) -> Event {
             end: cursor,
         },
         compose_region: None,
+        version: 0,
     })
 }
 
@@ -70,6 +71,7 @@ fn platform_output_append_keeps_the_latest_text_input_state() {
         text: text.to_owned(),
         selection: TextSpan { start: 0, end: 0 },
         compose_region: None,
+        version: 0,
     };
 
     let mut output = egui::PlatformOutput {

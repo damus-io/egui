@@ -2063,6 +2063,7 @@ fn to_egui_text_input_state(state: &winit::event::TextInputState) -> egui::TextI
             start: to_chars(start),
             end: to_chars(state.compose_region.end.unwrap_or(start)),
         }),
+        version: state.version,
     }
 }
 
@@ -2083,6 +2084,7 @@ fn to_winit_text_input_state(state: egui::TextInputState) -> winit::event::TextI
         text: state.text,
         selection,
         compose_region,
+        version: state.version,
     }
 }
 
@@ -2540,6 +2542,7 @@ mod tests {
                 start: Some(3),
                 end: Some(4),
             },
+            version: 7,
         };
 
         let egui_state = to_egui_text_input_state(&keyboard);

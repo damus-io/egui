@@ -85,6 +85,11 @@ pub(crate) struct SoftKeyboardCopy {
     /// is only trusted in the pass right after: an edit that was hidden or lost focus in between
     /// may have had its keyboard handed to another edit.
     pub pass_nr: u64,
+
+    /// The [`crate::TextInputState::version`] of the last state this edit sent the keyboard. A
+    /// keyboard state with an older version was made before the keyboard had that state, and
+    /// is ignored.
+    pub sent_version: u64,
 }
 
 impl TextEditState {

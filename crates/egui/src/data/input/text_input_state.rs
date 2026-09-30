@@ -33,4 +33,16 @@ pub struct TextInputState {
 
     /// A composing region defined on the text.
     pub compose_region: Option<TextSpan>,
+
+    /// Orders the states egui sends against the ones the keyboard sends back.
+    ///
+    /// On a state egui sends, this is its version, and each one sent is greater than the last.
+    ///
+    /// On a state the keyboard sends, this is the version of the last state egui sent that the
+    /// keyboard had been given when it made this one, or 0 if it had none. The keyboard edits its
+    /// copy while egui's latest state is still on its way to it, so a version older than the
+    /// last one egui sent means the keyboard made the state before it saw egui's latest edit
+    /// (e.g. clearing a message box after sending): it is stale, and egui's own state replaces
+    /// it on the keyboard's side, so a [`crate::TextEdit`] ignores it.
+    pub version: u64,
 }

@@ -1445,21 +1445,20 @@ fn events(
             Event::TextInputState(input_state)
                 if owns_ime_events && soft_keyboard_has_this_edit(state) =>
             {
-                #[cfg(any(target_os = "android", test))]
-                note_soft_keyboard_state(ui.ctx(), state, input_state);
-
-                let (keyboard_text, selection) = keyboard_text(input_state, multiline);
-                if !text.is_mutable() {
-                    None
-                } else if keyboard_text == text.as_str() {
-                    // Only the selection moved: that is not a text change.
-                    cursor_range = keyboard_cursor_range(selection, text);
+                if !take_soft_keyboard_state(ui.ctx(), state, input_state) || !text.is_mutable() {
                     None
                 } else {
-                    apply_text_diff(text, &keyboard_text, char_limit);
-                    Some(CursorMutation::Selection(keyboard_cursor_range(
-                        selection, text,
-                    )))
+                    let (keyboard_text, selection) = keyboard_text(input_state, multiline);
+                    if keyboard_text == text.as_str() {
+                        // Only the selection moved: that is not a text change.
+                        cursor_range = keyboard_cursor_range(selection, text);
+                        None
+                    } else {
+                        apply_text_diff(text, &keyboard_text, char_limit);
+                        Some(CursorMutation::Selection(keyboard_cursor_range(
+                            selection, text,
+                        )))
+                    }
                 }
             }
 
@@ -1614,22 +1613,55 @@ fn sorted_text_span(cursor_range: &CCursorRange) -> TextSpan {
     }
 }
 
-/// Remember what the soft keyboard now holds: the state it just sent.
+/// Should this edit apply a soft keyboard state? If so, remember that the keyboard now holds it.
+///
+/// Not if it is stale: its [`TextInputState::version`] is older than the last state this edit
+/// sent, so the keyboard made it before it was given that state (the user typed while an app
+/// edit, e.g. clearing a message box, was on its way). The edit's own state replaces it on the
+/// keyboard's side, so applying it would only undo the app's edit.
+///
+/// A keyboard that has never been given a state (version 0) doesn't hold this edit's text,
+/// whatever the edit's copy says: e.g. its activity was recreated. The edit forgets its copy,
+/// so the end of the pass sends the keyboard its state again.
 #[cfg(any(target_os = "android", test))]
-fn note_soft_keyboard_state(
+fn take_soft_keyboard_state(
     ctx: &Context,
     state: &mut TextEditState,
     input_state: &TextInputState,
-) {
+) -> bool {
+    let Some(copy) = &mut state.soft_keyboard else {
+        return false;
+    };
+
+    if input_state.version == 0 {
+        state.soft_keyboard = None;
+        return false;
+    }
+
+    if input_state.version < copy.sent_version {
+        return false;
+    }
+
     let TextSpan { start, end } = input_state.selection;
-    state.soft_keyboard = Some(SoftKeyboardCopy {
-        text_hash: epaint::util::hash(input_state.text.as_str()),
-        selection: TextSpan {
-            start: start.min(end),
-            end: start.max(end),
-        },
-        pass_nr: ctx.cumulative_pass_nr(),
-    });
+    copy.text_hash = epaint::util::hash(input_state.text.as_str());
+    copy.selection = TextSpan {
+        start: start.min(end),
+        end: start.max(end),
+    };
+    copy.pass_nr = ctx.cumulative_pass_nr();
+    true
+}
+
+/// Should this edit apply a soft keyboard state?
+///
+/// Only Android tracks what the soft keyboard holds, so everywhere else, always.
+#[cfg(not(any(target_os = "android", test)))]
+fn take_soft_keyboard_state(
+    _ctx: &Context,
+    _state: &mut TextEditState,
+    _input_state: &TextInputState,
+) -> bool {
+    true
 }
 
 /// Send the soft keyboard this edit's text and selection if its copy is out of date.
@@ -1657,6 +1689,10 @@ fn sync_soft_keyboard(
         text_hash: epaint::util::hash(text),
         selection: sorted_text_span(&cursor_range),
         pass_nr,
+        // At most one state is sent per pass, so this is greater than any this viewport sent
+        // before (Android has only the one), and never 0, which the keyboard reports until it
+        // has been given a state.
+        sent_version: pass_nr + 1,
     };
 
     let up_to_date = state.soft_keyboard.is_some_and(|copy| {
@@ -1677,6 +1713,7 @@ fn sync_soft_keyboard(
             text: text.to_owned(),
             selection,
             compose_region: None,
+            version: ours.sent_version,
         });
     });
     state.soft_keyboard = Some(ours);
@@ -1906,23 +1943,32 @@ mod tests {
     // ------------------------------------------------------------------------
     // Soft keyboard sync. `TextEdit` only tracks the keyboard on Android and in these tests.
 
-    /// The soft keyboard reporting that it now holds `text` with `start..end` selected.
+    /// The soft keyboard reporting that it now holds `text` with `start..end` selected, having
+    /// been given every state sent to it so far.
     fn keyboard(text: &str, start: usize, end: usize) -> Event {
+        keyboard_at(u64::MAX, text, start, end)
+    }
+
+    /// Like [`keyboard`], from a keyboard whose last state from egui was `version`.
+    fn keyboard_at(version: u64, text: &str, start: usize, end: usize) -> Event {
         Event::TextInputState(TextInputState {
             text: text.to_owned(),
             selection: TextSpan { start, end },
             compose_region: None,
+            version,
         })
     }
 
     /// What a pass sends the keyboard for `text` with `start..end` selected.
     ///
-    /// Never a composing region, even for a non-empty selection: see `sync_soft_keyboard`.
+    /// Never a composing region, even for a non-empty selection: see `sync_soft_keyboard`. The
+    /// version is left 0, as [`run`] leaves it.
     fn sent(text: &str, start: usize, end: usize) -> TextInputState {
         TextInputState {
             text: text.to_owned(),
             selection: TextSpan { start, end },
             compose_region: None,
+            version: 0,
         }
     }
 
@@ -1942,8 +1988,21 @@ mod tests {
         }
     }
 
-    /// Runs one pass and returns what it sent the soft keyboard.
+    /// Runs one pass and returns what it sent the soft keyboard, with the version left 0 so it
+    /// compares equal to [`sent`]. [`run_versioned`] keeps it.
     fn run(
+        ctx: &Context,
+        events: Vec<Event>,
+        ui_fn: impl FnMut(&mut Ui),
+    ) -> Option<TextInputState> {
+        run_versioned(ctx, events, ui_fn).map(|state| TextInputState {
+            version: 0,
+            ..state
+        })
+    }
+
+    /// Runs one pass and returns what it sent the soft keyboard.
+    fn run_versioned(
         ctx: &Context,
         events: Vec<Event>,
         ui_fn: impl FnMut(&mut Ui),
@@ -2055,6 +2114,63 @@ mod tests {
         text.clear();
         assert_eq!(pass(vec![], &mut text), Some(sent("", 0, 0)));
         assert_eq!(pass(vec![], &mut text), None);
+    }
+
+    /// The user types while an app edit is on its way to the keyboard: the composer is cleared
+    /// after sending, and the keyboard reports "hello!" before it has been given the "". That
+    /// state is stale and must not bring the message back. Only states the keyboard makes once
+    /// it has the "" are applied.
+    #[test]
+    fn a_stale_keyboard_state_does_not_undo_an_app_edit() {
+        let ctx = Context::default();
+        let id = Id::unique("soft_keyboard_edit");
+        let mut text = String::from("hello");
+        let pass = |events: Vec<Event>, text: &mut String| {
+            run_versioned(&ctx, events, |ui| {
+                focused(ui, id, TextEdit::singleline(text));
+            })
+        };
+
+        let hello = pass(vec![], &mut text).expect("the first pass sends the text");
+        assert_ne!(
+            hello.version, 0,
+            "0 is what a keyboard with no state reports"
+        );
+
+        // The app clears the text between passes.
+        text.clear();
+        let cleared = pass(vec![], &mut text).expect("the app edit is sent");
+        assert_eq!((cleared.text.as_str(), cleared.selection.end), ("", 0));
+        assert!(cleared.version > hello.version);
+
+        // The keyboard typed "!" into "hello" before it was given "".
+        let out = pass(vec![keyboard_at(hello.version, "hello!", 6, 6)], &mut text);
+        assert_eq!(text, "");
+        assert_eq!(
+            out, None,
+            "the \"\" already on its way replaces the keyboard's copy"
+        );
+
+        // Given "", the keyboard types "a" into it.
+        let out = pass(vec![keyboard_at(cleared.version, "a", 1, 1)], &mut text);
+        assert_eq!(text, "a");
+        assert_eq!(out, None);
+    }
+
+    /// A keyboard that has never been given a state from egui (e.g. its activity was recreated)
+    /// holds nothing of this edit's, whatever the edit last sent. Its state is not applied, and
+    /// the edit sends its own again in the same pass.
+    #[test]
+    fn a_keyboard_without_a_state_from_egui_is_sent_the_text_again() {
+        let mut text = String::from("hello");
+        let (ctx, id) = synced(&mut text);
+
+        let out = run(&ctx, vec![keyboard_at(0, "x", 1, 1)], |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text));
+        });
+
+        assert_eq!(text, "hello");
+        assert_eq!(out, Some(sent("hello", 5, 5)));
     }
 
     /// Cut, undo and redo change the text without the keyboard, so each is sent to it.
