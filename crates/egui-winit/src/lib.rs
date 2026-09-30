@@ -2009,6 +2009,7 @@ fn to_winit_ime_purpose(purpose: egui::IMEPurpose) -> winit::window::ImePurpose 
         egui::IMEPurpose::Password => winit::window::ImePurpose::Password,
         egui::IMEPurpose::Terminal => winit::window::ImePurpose::Terminal,
         egui::IMEPurpose::Normal => winit::window::ImePurpose::Normal,
+        egui::IMEPurpose::Multiline => winit::window::ImePurpose::Multiline,
     }
 }
 

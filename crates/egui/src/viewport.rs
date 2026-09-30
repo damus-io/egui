@@ -1035,6 +1035,10 @@ pub enum IMEPurpose {
     Normal,
     Password,
     Terminal,
+
+    /// Multi-line text input. On mobile this changes what the soft
+    /// keyboard's enter key does (newline instead of "done").
+    Multiline,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

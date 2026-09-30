@@ -997,6 +997,8 @@ impl<'t> TextEdit<'t> {
                             o.ime = Some(crate::output::IMEOutput {
                                 purpose: if password {
                                     IMEPurpose::Password
+                                } else if multiline {
+                                    IMEPurpose::Multiline
                                 } else {
                                     IMEPurpose::Normal
                                 },
