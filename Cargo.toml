@@ -171,6 +171,14 @@ wgpu = { version = "30.0", default-features = false, features = ["std"] }
 windows-sys = "0.61.2"
 winit = { version = "0.30.13", default-features = false }
 
+# damus-io/winit `winit-android-0.30.13`: v0.30.13 + the Android soft-keyboard patches
+# (`TextInputState`, `ImePurpose::Multiline`, `WindowEvent::InsetsChanged`) that egui-winit uses.
+# A `[patch]` rather than a git workspace dep, so `accesskit_winit` builds against the same winit.
+# Downstream workspaces need the same `[patch.crates-io]`, and its version must stay >= 0.30.13 or
+# the patch is silently unused.
+[patch.crates-io]
+winit = { git = "https://github.com/damus-io/winit", rev = "dffef5714d89dad525cee778530468dfb0f84350" }
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

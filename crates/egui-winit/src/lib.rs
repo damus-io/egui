@@ -541,7 +541,9 @@ impl State {
             // Things we completely ignore:
             WindowEvent::ActivationTokenDone { .. }
             | WindowEvent::AxisMotion { .. }
-            | WindowEvent::DoubleTapGesture { .. } => EventResponse {
+            | WindowEvent::DoubleTapGesture { .. }
+            | WindowEvent::TextInputState(_)
+            | WindowEvent::InsetsChanged => EventResponse {
                 repaint: false,
                 consumed: false,
             },
@@ -2370,6 +2372,8 @@ pub fn short_window_event_description(event: &winit::event::WindowEvent) -> &'st
         WindowEvent::PinchGesture { .. } => "WindowEvent::PinchGesture",
         WindowEvent::RedrawRequested => "WindowEvent::RedrawRequested",
         WindowEvent::DoubleTapGesture { .. } => "WindowEvent::DoubleTapGesture",
+        WindowEvent::TextInputState { .. } => "WindowEvent::TextInputState",
+        WindowEvent::InsetsChanged => "WindowEvent::InsetsChanged",
         WindowEvent::RotationGesture { .. } => "WindowEvent::RotationGesture",
         WindowEvent::TouchpadPressure { .. } => "WindowEvent::TouchpadPressure",
         WindowEvent::AxisMotion { .. } => "WindowEvent::AxisMotion",
