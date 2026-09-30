@@ -59,6 +59,7 @@ pub struct TextEditState {
 
     /// What the mobile soft keyboard holds for this edit, or `None` if it has not been sent this
     /// edit's text since the edit last gained IME ownership (so it still holds another edit's).
+    // `test` is here only so the soft keyboard sync tests in `builder.rs` run on the host.
     #[cfg(any(target_os = "android", test))]
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) soft_keyboard: Option<SoftKeyboardCopy>,

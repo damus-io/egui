@@ -1760,8 +1760,9 @@ mod tests {
 
     use super::apply_text_diff;
     use crate::{
-        Context, Event, Id, Key, Modifiers, RawInput, TextBuffer, TextEdit, TextInputState,
-        TextSpan, Ui, text_edit::TextEditState, text_selection::CCursorRange,
+        Context, Event, Id, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, TextBuffer,
+        TextEdit, TextInputState, TextSpan, Ui, text_edit::TextEditState,
+        text_selection::CCursorRange,
     };
 
     /// A [`TextBuffer`] that records how many chars were inserted and deleted.
@@ -1862,6 +1863,12 @@ mod tests {
         let mut buffer = NoDigitsBuffer("ab".to_owned());
         apply_text_diff(&mut buffer, "a1b2c", usize::MAX);
         assert_eq!(buffer.0, "abc");
+
+        // A refused insertion before an equal run: stepping the cursor over the digit that was
+        // never inserted would put the 'X' after the 'c'.
+        let mut buffer = NoDigitsBuffer("abc".to_owned());
+        apply_text_diff(&mut buffer, "1abXc", usize::MAX);
+        assert_eq!(buffer.0, "abXc");
     }
 
     #[test]
@@ -1893,6 +1900,7 @@ mod tests {
     // ------------------------------------------------------------------------
     // Soft keyboard sync. `TextEdit` only tracks the keyboard on Android and in these tests.
 
+    /// The soft keyboard reporting that it now holds `text` with `start..end` selected.
     fn keyboard(text: &str, start: usize, end: usize) -> Event {
         Event::TextInputState(TextInputState {
             text: text.to_owned(),
@@ -1911,13 +1919,19 @@ mod tests {
         }
     }
 
+    /// A hardware key press with no modifiers.
     fn key(key: Key) -> Event {
+        key_with(key, Modifiers::NONE)
+    }
+
+    /// A hardware key press with `modifiers` held, e.g. a shortcut.
+    fn key_with(key: Key, modifiers: Modifiers) -> Event {
         Event::Key {
             key,
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers: Modifiers::NONE,
+            modifiers,
         }
     }
 
@@ -1943,6 +1957,7 @@ mod tests {
         ui.add(edit.id(id)).changed()
     }
 
+    /// The edit's stored cursor, as the next pass will start from it.
     fn cursor(ctx: &Context, id: Id) -> CCursorRange {
         TextEditState::load(ctx, id)
             .and_then(|state| state.cursor.char_range())
@@ -2035,6 +2050,88 @@ mod tests {
         assert_eq!(pass(vec![], &mut text), None);
     }
 
+    /// Cut, undo and redo change the text without the keyboard, so each is sent to it.
+    #[test]
+    fn cut_undo_and_redo_are_sent_to_the_keyboard() {
+        let mut text = String::from("hello");
+        let (ctx, id) = synced(&mut text);
+        let pass = |events: Vec<Event>, text: &mut String| {
+            run(&ctx, events, |ui| {
+                focused(ui, id, TextEdit::singleline(text));
+            })
+        };
+
+        // The keyboard types a '!' and the undoer starts tracking the change.
+        assert_eq!(pass(vec![keyboard("hello!", 6, 6)], &mut text), None);
+
+        assert_eq!(
+            pass(vec![key_with(Key::Z, Modifiers::COMMAND)], &mut text),
+            Some(sent("hello", 5, 5))
+        );
+        assert_eq!(text, "hello");
+        assert_eq!(
+            pass(
+                vec![key_with(Key::Z, Modifiers::SHIFT | Modifiers::COMMAND)],
+                &mut text
+            ),
+            Some(sent("hello!", 6, 6))
+        );
+        assert_eq!(text, "hello!");
+
+        let mut state = TextEditState::load(&ctx, id).expect("state");
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::two(CCursor::new(1), CCursor::new(4))));
+        state.store(&ctx, id);
+        assert_eq!(pass(vec![Event::Cut], &mut text), Some(sent("ho!", 1, 1)));
+        assert_eq!(text, "ho!");
+    }
+
+    /// While the pointer drags out a selection, the keyboard is not sent every step of it, only
+    /// the selection it ends on, once the button is released.
+    #[test]
+    fn a_selection_is_sent_when_the_drag_ends() {
+        let mut text = String::from("hello world");
+        let (ctx, id) = synced(&mut text);
+        let mut rect = Rect::NOTHING;
+        run(&ctx, vec![], |ui| {
+            ui.memory_mut(|mem| mem.request_focus(id));
+            rect = ui.add(TextEdit::singleline(&mut text).id(id)).rect;
+        });
+        let mut pass = |events: Vec<Event>| {
+            run(&ctx, events, |ui| {
+                focused(ui, id, TextEdit::singleline(&mut text));
+            })
+        };
+
+        let start = Pos2::new(rect.left() + 1.0, rect.center().y);
+        let end = Pos2::new(rect.right() - 1.0, rect.center().y);
+        let button = |pos: Pos2, pressed: bool| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+
+        pass(vec![Event::PointerMoved(start)]);
+        // The press moves the cursor, but the button is down, so the keyboard is not told yet.
+        assert_eq!(pass(vec![button(start, true)]), None);
+        assert_eq!(cursor(&ctx, id), CCursorRange::one(CCursor::new(0)));
+
+        // Nor while the drag selects everything.
+        assert_eq!(pass(vec![Event::PointerMoved(end)]), None);
+        assert_eq!(
+            cursor(&ctx, id),
+            CCursorRange::two(CCursor::new(0), CCursor::new(11))
+        );
+
+        assert_eq!(
+            pass(vec![button(end, false)]),
+            Some(sent("hello world", 0, 11))
+        );
+        assert_eq!(pass(vec![]), None);
+    }
+
     /// Selections go to the keyboard too, always with `start <= end`.
     #[test]
     fn a_backward_selection_is_sent_forward() {
@@ -2106,6 +2203,8 @@ mod tests {
         assert_eq!(out, Some(sent("abcd", 4, 4)));
     }
 
+    /// Guards against stripping too much: a multi-line edit keeps the keyboard's newlines. This
+    /// passes without the stripping too, so it is not coverage for it; the single-line test is.
     #[test]
     fn keyboard_newlines_are_kept_in_multiline_edits() {
         let ctx = Context::default();
@@ -2141,16 +2240,19 @@ mod tests {
         );
     }
 
+    /// A keyboard selection past the end of its text is clamped, and the keyboard is told the
+    /// clamped selection so its copy stops disagreeing with the edit's.
     #[test]
     fn keyboard_selection_is_clamped_to_the_text() {
         let mut text = String::from("hello");
         let (ctx, id) = synced(&mut text);
 
-        run(&ctx, vec![keyboard("hello world", 50, 60)], |ui| {
+        let out = run(&ctx, vec![keyboard("hello world", 50, 60)], |ui| {
             focused(ui, id, TextEdit::singleline(&mut text));
         });
 
         assert_eq!(text, "hello world");
         assert_eq!(cursor(&ctx, id), CCursorRange::one(CCursor::new(11)));
+        assert_eq!(out, Some(sent("hello world", 11, 11)));
     }
 }
