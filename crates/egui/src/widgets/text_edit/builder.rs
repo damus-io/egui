@@ -935,12 +935,6 @@ impl<'t> TextEdit<'t> {
 
         let has_focus = ui.memory(|mem| mem.has_focus(id));
 
-        // The cursor as the events left it, indexing into `text`. The soft keyboard must get this
-        // one: on the first keystroke into hint text, `galley` is still the empty one, and a
-        // cursor clamped to it would lag `text` by a pass.
-        #[cfg(any(target_os = "android", test))]
-        let events_cursor_range = cursor_range;
-
         // Keep a focused edit in view when the content rect changes, e.g. when the window
         // shrinks to make room for a mobile soft keyboard.
         if has_focus && ui.input(|i| i.content_rect_changed()) {
@@ -976,10 +970,19 @@ impl<'t> TextEdit<'t> {
                 if text.is_mutable() && interactive {
                     #[cfg(any(target_os = "android", test))]
                     if ui.memory(|mem| mem.owns_ime_events(id)) {
+                        // The cursor as the events and then the pointer left it, indexing into
+                        // `text`. Not the events' own `cursor_range` from above: a cursor the
+                        // pointer set this pass would reach the keyboard a pass late, and a
+                        // keystroke before then would go in at the old cursor. Nor this
+                        // `cursor_range`, clamped to `galley`: on the first keystroke into hint
+                        // text, `galley` is still the empty one, and the clamped cursor would lag
+                        // `text` by a pass.
+                        let keyboard_cursor_range =
+                            state.cursor.char_range().unwrap_or(cursor_range);
                         sync_soft_keyboard(
                             ui.ctx(),
                             &mut state,
-                            events_cursor_range.unwrap_or(cursor_range),
+                            keyboard_cursor_range,
                             text.as_str(),
                             response.dragged(),
                         );
@@ -2118,11 +2121,15 @@ mod tests {
         };
 
         pass(vec![Event::PointerMoved(start)]);
-        // The press moves the cursor, but the button is down, so the keyboard is not told yet.
-        assert_eq!(pass(vec![button(start, true)]), None);
+        // The press moves the cursor. It is not a drag until the pointer moves, so the keyboard
+        // is told in the same pass.
+        assert_eq!(
+            pass(vec![button(start, true)]),
+            Some(sent("hello world", 0, 0))
+        );
         assert_eq!(cursor(&ctx, id), CCursorRange::one(CCursor::new(0)));
 
-        // Nor while the drag selects everything.
+        // But not while the drag selects everything.
         assert_eq!(pass(vec![Event::PointerMoved(end)]), None);
         assert_eq!(
             cursor(&ctx, id),
@@ -2134,6 +2141,38 @@ mod tests {
             Some(sent("hello world", 0, 11))
         );
         assert_eq!(pass(vec![]), None);
+    }
+
+    /// A tap that moves the cursor tells the keyboard in the same pass, even when the press and
+    /// the release land in one pass. There may be no other pass before the next keystroke, which
+    /// would then go in at the old cursor.
+    #[test]
+    fn a_tap_sends_the_cursor_it_places_in_the_same_pass() {
+        let mut text = String::from("hello");
+        let (ctx, id) = synced(&mut text);
+        let mut rect = Rect::NOTHING;
+        run(&ctx, vec![], |ui| {
+            ui.memory_mut(|mem| mem.request_focus(id));
+            rect = ui.add(TextEdit::singleline(&mut text).id(id)).rect;
+        });
+
+        let pos = Pos2::new(rect.left() + 1.0, rect.center().y);
+        let button = |pressed: bool| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        let out = run(
+            &ctx,
+            vec![Event::PointerMoved(pos), button(true), button(false)],
+            |ui| {
+                focused(ui, id, TextEdit::singleline(&mut text));
+            },
+        );
+
+        assert_eq!(cursor(&ctx, id), CCursorRange::one(CCursor::new(0)));
+        assert_eq!(out, Some(sent("hello", 0, 0)));
     }
 
     /// Selections go to the keyboard too, always with `start <= end`.
