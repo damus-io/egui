@@ -1635,8 +1635,12 @@ fn note_soft_keyboard_state(
 /// anything but the keyboard: an app edit, a hardware key, paste, cut, undo, the pointer. While
 /// the pointer is still dragging a selection, only text changes are sent.
 ///
-/// A non-empty selection is also sent as the composing region, which is what the keyboard uses
-/// for suggestions.
+/// No composing region is ever sent. Only the keyboard starts a composition, and egui neither
+/// draws nor tracks one, so everything sent from here is a change the keyboard didn't make.
+/// Sending the selection as the composing region, as this used to do, told the keyboard that
+/// a pointer selection was a word it was composing. On the Java side `setSelection` doesn't
+/// clear composing spans, so if the keyboard then moved the cursor itself, the region stayed
+/// behind and the next committed text replaced it instead of going in at the cursor.
 #[cfg(any(target_os = "android", test))]
 fn sync_soft_keyboard(
     ctx: &Context,
@@ -1663,14 +1667,13 @@ fn sync_soft_keyboard(
     }
 
     let selection = ours.selection;
-    let compose_region = (selection.start != selection.end).then_some(selection);
 
     log::debug!("update egui->android TextInputState {selection:?}");
     ctx.output_mut(|o| {
         o.text_input_state = Some(TextInputState {
             text: text.to_owned(),
             selection,
-            compose_region,
+            compose_region: None,
         });
     });
     state.soft_keyboard = Some(ours);
@@ -1910,12 +1913,13 @@ mod tests {
     }
 
     /// What a pass sends the keyboard for `text` with `start..end` selected.
+    ///
+    /// Never a composing region, even for a non-empty selection: see `sync_soft_keyboard`.
     fn sent(text: &str, start: usize, end: usize) -> TextInputState {
-        let selection = TextSpan { start, end };
         TextInputState {
             text: text.to_owned(),
-            selection,
-            compose_region: (start != end).then_some(selection),
+            selection: TextSpan { start, end },
+            compose_region: None,
         }
     }
 
@@ -2148,6 +2152,26 @@ mod tests {
             focused(ui, id, TextEdit::singleline(&mut text));
         });
         assert_eq!(out, Some(sent("hello", 1, 4)));
+    }
+
+    /// A selection is sent as a selection, not as a word the keyboard is composing.
+    #[test]
+    fn a_selection_is_not_sent_as_a_composition() {
+        let mut text = String::from("hello world");
+        let (ctx, id) = synced(&mut text);
+
+        let mut state = TextEditState::load(&ctx, id).expect("state");
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::two(CCursor::new(6), CCursor::new(11))));
+        state.store(&ctx, id);
+
+        let out = run(&ctx, vec![], |ui| {
+            focused(ui, id, TextEdit::singleline(&mut text));
+        })
+        .expect("the selection is sent");
+        assert_eq!(out.selection, TextSpan { start: 6, end: 11 });
+        assert_eq!(out.compose_region, None);
     }
 
     /// The first keystroke into an edit showing hint text is not echoed back. That pass still
