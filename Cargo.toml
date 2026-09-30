@@ -179,7 +179,7 @@ winit = { version = "0.30.13", default-features = false }
 # Downstream workspaces need the same `[patch.crates-io]`, and its version must stay >= 0.30.13 or
 # the patch is silently unused.
 [patch.crates-io]
-winit = { git = "https://github.com/damus-io/winit", rev = "dffef5714d89dad525cee778530468dfb0f84350" }
+winit = { git = "https://github.com/damus-io/winit", rev = "906e8cfdc48288385bd029befae7bead50e58bde" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
