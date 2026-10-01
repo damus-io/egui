@@ -14,6 +14,7 @@ use crate::{
     ecolor::Color32,
     emath::{Rangef, Rect, Vec2, pos2, vec2},
     reset_button_with,
+    scroll_area::DragScroll,
 };
 
 /// How to format numbers in e.g. a [`crate::DragValue`].
@@ -943,6 +944,13 @@ pub struct Interaction {
     /// The default is `true`, but text selection can be slightly glitchy,
     /// so you may want to disable it.
     pub multi_widget_text_select: bool,
+
+    /// When can the user scroll a [`crate::ScrollArea`] by dragging its contents?
+    ///
+    /// Defaults to [`DragScroll::OnTouch`]. Set it to [`DragScroll::Always`] to
+    /// also drag-scroll with a mouse. A scroll area given its own
+    /// [`crate::scroll_area::ScrollSource`] ignores this.
+    pub drag_to_scroll: DragScroll,
 }
 
 /// Look and feel of the text cursor.
@@ -1489,6 +1497,7 @@ impl Default for Interaction {
             tooltip_grace_time: 0.2,
             selectable_labels: true,
             multi_widget_text_select: true,
+            drag_to_scroll: DragScroll::OnTouch,
         }
     }
 }
@@ -2088,6 +2097,7 @@ impl Interaction {
             tooltip_grace_time,
             selectable_labels,
             multi_widget_text_select,
+            drag_to_scroll,
         } = self;
 
         ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
@@ -2142,6 +2152,13 @@ impl Interaction {
             if *selectable_labels {
                 ui.checkbox(multi_widget_text_select, "Across multiple labels");
             }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Drag to scroll:");
+            ui.selectable_value(drag_to_scroll, DragScroll::Never, "Never");
+            ui.selectable_value(drag_to_scroll, DragScroll::OnTouch, "On touch");
+            ui.selectable_value(drag_to_scroll, DragScroll::Always, "Always");
         });
 
         ui.vertical_centered(|ui| reset_button(ui, self, "Reset interaction settings"));

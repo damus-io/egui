@@ -180,7 +180,9 @@ fn to_sizing(columns: &[Column]) -> crate::sizing::Sizing {
 
 struct TableScrollOptions {
     vscroll: bool,
-    drag_to_scroll: DragScroll,
+
+    /// `None` follows [`egui::style::Interaction::drag_to_scroll`].
+    drag_to_scroll: Option<DragScroll>,
     stick_to_bottom: bool,
     scroll_to_row: Option<(usize, Option<Align>)>,
     scroll_offset_y: Option<f32>,
@@ -195,7 +197,7 @@ impl Default for TableScrollOptions {
     fn default() -> Self {
         Self {
             vscroll: true,
-            drag_to_scroll: DragScroll::OnTouch,
+            drag_to_scroll: None,
             stick_to_bottom: false,
             scroll_to_row: None,
             scroll_offset_y: None,
@@ -320,12 +322,14 @@ impl<'a> TableBuilder<'a> {
 
     /// Controls scrolling the table's contents by dragging with the pointer.
     ///
-    /// Defaults to [`DragScroll::OnTouch`] — only active when a touch screen is detected.
+    /// Defaults to [`egui::style::Interaction::drag_to_scroll`], which is
+    /// [`DragScroll::OnTouch`] (only active when a touch screen is detected)
+    /// unless the app changed it.
     ///
     /// See [`ScrollArea::scroll_source`] and [`DragScroll`] for more.
     #[inline]
     pub fn drag_to_scroll(mut self, drag_to_scroll: DragScroll) -> Self {
-        self.scroll_options.drag_to_scroll = drag_to_scroll;
+        self.scroll_options.drag_to_scroll = Some(drag_to_scroll);
         self
     }
 
@@ -736,12 +740,15 @@ impl Table<'_> {
 
         let cursor_position = ui.cursor().min;
 
-        let mut scroll_area = ScrollArea::new([false, vscroll])
-            .id_salt(state_id.with("__scroll_area"))
-            .scroll_source(ScrollSource {
-                drag: drag_to_scroll,
+        let mut scroll_area =
+            ScrollArea::new([false, vscroll]).id_salt(state_id.with("__scroll_area"));
+        if let Some(drag) = drag_to_scroll {
+            scroll_area = scroll_area.scroll_source(ScrollSource {
+                drag,
                 ..Default::default()
-            })
+            });
+        }
+        let mut scroll_area = scroll_area
             .stick_to_bottom(stick_to_bottom)
             .min_scrolled_height(min_scrolled_height)
             .max_height(max_scroll_height)

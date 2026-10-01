@@ -149,7 +149,8 @@ pub enum DragScroll {
     Never,
 
     /// Only allow drag-to-scroll when a touch screen is detected
-    /// (see [`crate::InputState::has_touch_screen`]). The recommended default.
+    /// (see [`crate::InputState::has_touch_screen`]). The recommended default,
+    /// and the default of [`crate::style::Interaction::drag_to_scroll`].
     #[default]
     OnTouch,
 
@@ -201,6 +202,9 @@ pub struct ScrollSource {
     /// Defaults to [`DragScroll::OnTouch`]: only active when a touch screen is
     /// detected. Set to [`DragScroll::Always`] to force it on, or
     /// [`DragScroll::Never`] to disable.
+    ///
+    /// A [`ScrollArea`] that is never given a [`ScrollSource`] takes this from
+    /// [`crate::style::Interaction::drag_to_scroll`] instead.
     pub drag: DragScroll,
 
     /// Scroll the area by scrolling (or shift scrolling) the mouse wheel with
@@ -349,7 +353,10 @@ pub struct ScrollArea {
     offset_y: Option<f32>,
     on_hover_cursor: Option<CursorIcon>,
     on_drag_cursor: Option<CursorIcon>,
-    scroll_source: ScrollSource,
+
+    /// `None` means "the default sources, dragging per
+    /// [`crate::style::Interaction::drag_to_scroll`]".
+    scroll_source: Option<ScrollSource>,
     wheel_scroll_multiplier: Vec2,
 
     content_margin: Option<Margin>,
@@ -404,7 +411,7 @@ impl ScrollArea {
             offset_y: None,
             on_hover_cursor: None,
             on_drag_cursor: None,
-            scroll_source: ScrollSource::default(),
+            scroll_source: None,
             wheel_scroll_multiplier: Vec2::splat(1.0),
             content_margin: None,
             stick_to_end: Vec2b::FALSE,
@@ -578,9 +585,13 @@ impl ScrollArea {
     /// is typing text in a [`crate::TextEdit`] widget contained within the scroll area.
     ///
     /// What sources does the [`ScrollArea`] use for scrolling the contents.
+    ///
+    /// If this is never called, the scroll area uses [`ScrollSource::default`]
+    /// with [`ScrollSource::drag`] taken from
+    /// [`crate::style::Interaction::drag_to_scroll`].
     #[inline]
     pub fn scroll_source(mut self, scroll_source: ScrollSource) -> Self {
-        self.scroll_source = scroll_source;
+        self.scroll_source = Some(scroll_source);
         self
     }
 
@@ -729,6 +740,11 @@ impl ScrollArea {
         } = self;
 
         let ctx = ui.ctx().clone();
+
+        let scroll_source = scroll_source.unwrap_or_else(|| ScrollSource {
+            drag: ui.style().interaction.drag_to_scroll,
+            ..Default::default()
+        });
 
         let id_salt = id_salt.unwrap_or_else(|| IdSalt::new("scroll_area"));
         let id = ui.make_persistent_id(id_salt);
